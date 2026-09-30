@@ -1,0 +1,12 @@
+node_modules
+.git
+.env
+.env.local
+logs
+coverage
+backups
+uploads
+*.log
+.github
+docs
+__mocks__

@@ -1,2 +1,1 @@
-# ssd-backend
-Sivadurga temple backend
+# SSD-Backend

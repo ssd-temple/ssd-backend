@@ -1,0 +1,71 @@
+const mongoose = require("mongoose");
+const {
+  auditablePlugin,
+  activeUniqueIndexOptions,
+  activeUniqueWhenPresent,
+} = require("../../common/plugins/auditable");
+
+/**
+ * The booking/profile record — FSD §3.12. Distinct from `User` (the login
+ * identity): a Customer can exist without ever having a login (a walk-in
+ * POS entry, once POS is built), and a User's `entities[].roles` govern
+ * what they can *do*, not who they *are* for booking purposes. When a
+ * Customer is created alongside a registration or admin-created account,
+ * `linkedUserId` connects the two; it's null for a pure walk-in.
+ */
+// Not required in either direction — a family member entered in Tamil (e.g.
+// typed at the POS counter) is stored in nameTamil alone, English one in
+// nameEnglish alone. Neither gets back-filled with the other's value, so the
+// "English / Tamil" combined display (CustomersPage.tsx, PosPortalPage.tsx)
+// only ever appears once someone has deliberately filled in both.
+const familyMemberSchema = new mongoose.Schema(
+  {
+    nameEnglish: { type: String, default: "", trim: true },
+    nameTamil: { type: String, default: "", trim: true },
+    natchathiram: { type: mongoose.Schema.Types.ObjectId, ref: "Nakshathiram", default: null },
+  },
+  { _id: false }
+);
+
+const customerSchema = new mongoose.Schema({
+  customerCode: { type: String, required: true }, // uniqueness enforced by the partial index below, not here
+  entity: { type: mongoose.Schema.Types.ObjectId, ref: "Entity", required: true },
+  linkedUserId: { type: mongoose.Schema.Types.ObjectId, default: null }, // User lives in this same service — ref kept informal, see auditable.js's note on cross-service refs
+
+  name: { type: String, required: true, trim: true },
+  // Optional at the schema level, required by the flows that genuinely need
+  // it (public registration, and POS walk-ins when that lands). Staff
+  // accounts are enrolled in the customer pool automatically and may not
+  // have supplied a mobile yet — refusing them a profile over it would mean
+  // an admin couldn't book a pooja for their own family.
+  mobileNumber: { type: String, default: null, trim: true },
+  email: { type: String, required: true, trim: true, lowercase: true },
+
+  familyMembers: { type: [familyMemberSchema], default: [] },
+  maxFamilyMembers: { type: Number, default: 5 },
+
+  // A walk-in profile created at the POS counter starts unregistered — it's
+  // a placeholder the counter can reuse and fill in further on a repeat
+  // visit (matched by mobile number; see GET /pos/booking/customers/lookup)
+  // without creating a duplicate. Every other creation path (public
+  // registration, admin-created, seed data) is a real registration and sets
+  // this true from the start; once true, a profile is never matched for
+  // walk-in auto-fill again — reuse at that point goes through the normal
+  // customer search instead.
+  isRegistered: { type: Boolean, default: true },
+});
+
+customerSchema.plugin(auditablePlugin);
+
+customerSchema.index({ customerCode: 1 }, activeUniqueIndexOptions());
+customerSchema.index({ mobileNumber: 1 }, activeUniqueWhenPresent("mobileNumber")); // the primary POS lookup field (§10)
+customerSchema.index({ email: 1 }, activeUniqueIndexOptions());
+customerSchema.index({ linkedUserId: 1 }); // "which profile belongs to this login" — read on every customer-side request
+
+customerSchema.pre("validate", function enforceFamilyMemberCap() {
+  if (this.familyMembers.length > this.maxFamilyMembers) {
+    throw new Error(`Only ${this.maxFamilyMembers} family member(s) allowed for this customer.`);
+  }
+});
+
+module.exports = { Customer: mongoose.model("Customer", customerSchema) };
