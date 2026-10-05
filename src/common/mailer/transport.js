@@ -12,7 +12,9 @@ const isPlaceholder = (value) =>
 
 const isBrevoConfigured = () => !isPlaceholder(env.BREVO_API_KEY);
 const isGmailConfigured = () => !isPlaceholder(env.GMAIL_USER) && !isPlaceholder(env.GMAIL_APP_PASSWORD);
-const isEmailConfigured = () => isBrevoConfigured() || isGmailConfigured();
+// Amazon SES is the default sender (no keys needed on EC2 — it uses the instance role).
+// Brevo / Gmail are used only when their keys are set, e.g. on Render or in local dev.
+const isSesConfigured = () => !isBrevoConfigured() && !isGmailConfigured();
 
 function getBrevoApiKey() {
   const key = String(env.BREVO_API_KEY || "").trim();
@@ -44,11 +46,45 @@ function getTransporter() {
   return transporter;
 }
 
-/** Prefer Brevo on Render — Gmail SMTP is blocked on the free tier. */
+let sesClient = null;
+
+function getSes() {
+  if (sesClient) return sesClient;
+  const { SESv2Client } = require("@aws-sdk/client-sesv2");
+  // No keys here: on EC2 the SDK picks up the instance role (ssd-*-ec2-role) automatically.
+  sesClient = new SESv2Client({ region: env.AWS_REGION });
+  return sesClient;
+}
+
+async function sendViaSes({ to, cc, bcc, subject, html, from }) {
+  const { SendEmailCommand } = require("@aws-sdk/client-sesv2");
+  try {
+    await getSes().send(
+      new SendEmailCommand({
+        FromEmailAddress: from || env.SENDER_EMAIL_ID,
+        Destination: {
+          ToAddresses: [to],
+          ...(cc?.length ? { CcAddresses: cc } : {}),
+          ...(bcc?.length ? { BccAddresses: bcc } : {}),
+        },
+        Content: {
+          Simple: {
+            Subject: { Data: subject, Charset: "UTF-8" },
+            Body: { Html: { Data: html, Charset: "UTF-8" } },
+          },
+        },
+      })
+    );
+  } catch (err) {
+    throw new Error(`SES send failed: ${err.name}: ${err.message}`);
+  }
+}
+
+/** Brevo or Gmail when their keys are set (Render / local dev); otherwise Amazon SES. */
 function getEmailProvider() {
   if (isBrevoConfigured()) return "brevo";
   if (isGmailConfigured()) return "gmail";
-  return null;
+  return "ses";
 }
 
 async function sendViaBrevo({ to, cc, bcc, subject, html, from }) {
@@ -123,10 +159,10 @@ async function sendRawEmail({ to, subject, html, cc = [], bcc = [], from }) {
   }
 
   const provider = getEmailProvider();
-  if (!provider) {
-    throw new Error(
-      "Email not configured. Set BREVO_API_KEY (works on Render's free tier) or GMAIL_USER + GMAIL_APP_PASSWORD (local dev / paid Render)."
-    );
+
+  if (provider === "ses") {
+    await sendViaSes({ to, cc, bcc, subject, html, from });
+    return { sent: true, provider: "ses" };
   }
 
   if (provider === "brevo") {
@@ -148,6 +184,20 @@ async function sendRawEmail({ to, subject, html, cc = [], bcc = [], from }) {
 
 /** Used by a future health/diagnostics route to confirm the configured provider actually works. */
 async function verifyEmailConnection() {
+  if (isSesConfigured()) {
+    try {
+      const { GetAccountCommand } = require("@aws-sdk/client-sesv2");
+      const acct = await getSes().send(new GetAccountCommand({}));
+      return {
+        ok: true,
+        provider: "ses",
+        message: `SES OK (production access: ${Boolean(acct.ProductionAccessEnabled)}, sending enabled: ${Boolean(acct.SendingEnabled)})`,
+      };
+    } catch (err) {
+      return { ok: false, provider: "ses", message: `${err.name}: ${err.message}` };
+    }
+  }
+
   if (isBrevoConfigured()) {
     try {
       const res = await fetch(`${BREVO_API}/account`, {
@@ -170,4 +220,4 @@ async function verifyEmailConnection() {
   }
 }
 
-module.exports = { sendRawEmail, isEmailConfigured, isBrevoConfigured, isGmailConfigured, verifyEmailConnection };
+module.exports = { sendRawEmail, isSesConfigured, isBrevoConfigured, isGmailConfigured, verifyEmailConnection };

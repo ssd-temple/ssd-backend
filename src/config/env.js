@@ -48,20 +48,22 @@ module.exports = {
    */
   DRY_RUN_NOTIFICATIONS: (process.env.DRY_RUN_NOTIFICATIONS ?? "true") === "true",
 
-  // Same dual-provider approach as Syncetra-Backend (source/service/email):
-  // Brevo's HTTP API first — Gmail SMTP is blocked outbound on Render's free
-  // tier — falling back to Gmail SMTP via nodemailer for local dev or a paid
-  // Render plan. See common/mailer/transport.js. Swap this block for AWS SES
-  // once the project moves onto AWS (same DRY_RUN_NOTIFICATIONS gate stays).
+  // Sender order, see common/mailer/transport.js: Brevo's HTTP API when BREVO_API_KEY is set
+  // (Gmail SMTP is blocked on Render's free tier), then Gmail SMTP via nodemailer when GMAIL_* is
+  // set (local dev), otherwise Amazon SES. The DRY_RUN_NOTIFICATIONS gate applies to all of them.
+  // On AWS leave BREVO_* / GMAIL_* empty: SES then uses the EC2 instance role, no keys.
+  // SENDER_EMAIL_ID must be a verified SES identity (an address or a domain) in AWS_REGION.
+  AWS_REGION: process.env.AWS_REGION || "ap-southeast-1",
   BREVO_API_KEY: process.env.BREVO_API_KEY || "",
   GMAIL_USER: process.env.GMAIL_USER || "",
   GMAIL_APP_PASSWORD: process.env.GMAIL_APP_PASSWORD || "",
   SENDER_EMAIL_ID: process.env.SENDER_EMAIL_ID || "no-reply@example-temple.org",
 
-  // Profile image uploads — see common/utils/cloudinary.js and
-  // common/middleware/upload.js. Chosen over local disk (wiped on every
-  // Render redeploy) and over S3 (deferred until the AWS move) because it
-  // works identically on Render today and after that migration.
+  // Image uploads — see common/utils/storage.js and common/middleware/upload.js. Never local disk.
+  // S3_BUCKET set = Amazon S3 (EC2 instance role); empty = Cloudinary (local dev / Render).
+  // S3_PUBLIC_BASE_URL is optional: a CloudFront domain; blank = the bucket's own https address.
+  S3_BUCKET: process.env.S3_BUCKET || "",
+  S3_PUBLIC_BASE_URL: process.env.S3_PUBLIC_BASE_URL || "",
   CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || "",
   CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || "",
   CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || "",

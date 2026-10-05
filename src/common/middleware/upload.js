@@ -1,5 +1,5 @@
 const multer = require("multer");
-const cloudinary = require("../utils/cloudinary");
+const { uploadImageBuffer } = require("../utils/storage");
 const { exceptionHandler } = require("../../utilities/handlers");
 
 /**
@@ -24,21 +24,6 @@ const makeUploader = (maxBytes, maxFiles = 1) =>
   });
 
 const uploader = makeUploader(MAX_BYTES);
-
-/**
- * Uploads a buffer to Cloudinary via its streaming API — multer already has
- * the whole file in memory (2 MB cap above), so there's no benefit to
- * writing it to a temp file first just to re-read it.
- */
-function uploadBufferToCloudinary(buffer, folder) {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: "image" },
-      (error, result) => (error ? reject(error) : resolve(result))
-    );
-    stream.end(buffer);
-  });
-}
 
 /**
  * Builds an Express middleware that takes one multipart file field, uploads
@@ -84,7 +69,7 @@ function makeImageUpload({ formField, targetField = formField, folder, label = "
       }
 
       try {
-        const result = await uploadBufferToCloudinary(req.file.buffer, folder);
+        const result = await uploadImageBuffer(req.file.buffer, folder, req.file.mimetype);
         // The full secure_url is stored as-is — resolveImageUrl() on the
         // frontend already passes absolute https:// URLs through unchanged.
         req.body[targetField] = result.secure_url;
@@ -146,7 +131,7 @@ function makeMultiImageUpload(specs) {
             if (hasExisting) req.body[target] = existingValue;
             continue;
           }
-          const result = await uploadBufferToCloudinary(file.buffer, spec.folder);
+          const result = await uploadImageBuffer(file.buffer, spec.folder, file.mimetype);
           req.body[target] = result.secure_url;
         }
         return next();
@@ -305,7 +290,7 @@ function hydrateMultipartBody(req, res, next) {
  * call on the same request would try to re-read a multipart stream multer
  * already consumed. `uploader.fields([...])` parses both in one pass
  * instead, then each file is streamed to Cloudinary the same way
- * `uploadBufferToCloudinary` already does for every other master.
+ * `uploadImageBuffer` already does for every other master.
  */
 const hallMediaUploader = multer({
   storage: multer.memoryStorage(),
@@ -357,14 +342,14 @@ function uploadHallMedia(req, res, next) {
 
       if (files.hallImages?.length) {
         const uploaded = await Promise.all(
-          files.hallImages.map((file) => uploadBufferToCloudinary(file.buffer, "ssd-temple/halls"))
+          files.hallImages.map((file) => uploadImageBuffer(file.buffer, "ssd-temple/halls", file.mimetype))
         );
         keptHallImages = [...keptHallImages, ...uploaded.map((r) => r.secure_url)];
       }
       if (hallImagesTouched) req.body.hallImages = keptHallImages;
 
       if (files.floorPlan?.[0]) {
-        const result = await uploadBufferToCloudinary(files.floorPlan[0].buffer, "ssd-temple/halls/floor-plans");
+        const result = await uploadImageBuffer(files.floorPlan[0].buffer, "ssd-temple/halls/floor-plans", files.floorPlan[0].mimetype);
         req.body.floorPlan = result.secure_url;
       } else if (floorPlanTouched) {
         req.body.floorPlan = keptFloorPlan;
