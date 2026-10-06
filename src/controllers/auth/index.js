@@ -225,11 +225,18 @@ async function forgotPassword(req, res) {
       const resetPathPrefix = user.userType === USER_TYPES.CUSTOMER ? "/customer" : "/admin";
       const resetUrl = `${env.ADMIN_APP_URL}${resetPathPrefix}/reset-password/${rawToken}`;
       const defaultAssignment = user.getDefaultEntityAssignment();
-      await sendTemplatedEmail("PASSWORD_RESET", defaultAssignment?.entity, user.email, {
-        name: user.name,
-        resetUrl,
-        expiresInMinutes: env.RESET_TOKEN_TTL_MINUTES,
-      });
+      try {
+        await sendTemplatedEmail("PASSWORD_RESET", defaultAssignment?.entity, user.email, {
+          name: user.name,
+          resetUrl,
+          expiresInMinutes: env.RESET_TOKEN_TTL_MINUTES,
+        });
+      } catch (mailError) {
+        // A readable delivery error (e.g. "address not verified") would reveal that the account exists,
+        // so it is logged here and the caller still gets the same generic reply as for unknown accounts.
+        if (!mailError?.expose) throw mailError;
+        console.error(">>> forgotPassword: reset email not delivered:", mailError.message);
+      }
     }
 
     return responseHandler({

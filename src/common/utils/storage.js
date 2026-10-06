@@ -25,9 +25,12 @@ function getS3() {
 
 function publicUrlFor(key) {
   // CloudFront (or any custom domain) if configured, else the bucket's own https endpoint.
-  const base = env.S3_PUBLIC_BASE_URL
-    ? env.S3_PUBLIC_BASE_URL.replace(/\/+$/, "")
+  let base = env.S3_PUBLIC_BASE_URL
+    ? env.S3_PUBLIC_BASE_URL.trim().replace(/\/+$/, "")
     : `https://${env.S3_BUCKET}.s3.${env.AWS_REGION}.amazonaws.com`;
+  // The saved value must be an absolute URL: the frontend treats anything without a scheme as a
+  // path on the API host. Tolerate a base typed without "https://".
+  if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
   return `${base}/${key}`;
 }
 

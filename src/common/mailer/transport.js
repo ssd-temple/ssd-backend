@@ -52,8 +52,64 @@ function getSes() {
   if (sesClient) return sesClient;
   const { SESv2Client } = require("@aws-sdk/client-sesv2");
   // No keys here: on EC2 the SDK picks up the instance role (ssd-*-ec2-role) automatically.
-  sesClient = new SESv2Client({ region: env.AWS_REGION });
+  // "adaptive" retry mode makes the SDK slow itself down and retry when SES answers "too many requests".
+  sesClient = new SESv2Client({ region: env.AWS_REGION, maxAttempts: 5, retryMode: "adaptive" });
   return sesClient;
+}
+
+/**
+ * An email failure whose message is safe and useful to show to the person using the app.
+ * `expose` tells exceptionHandler to return `message` as-is (any other error stays generic).
+ */
+class EmailDeliveryError extends Error {
+  constructor(message, { status = 422, cause } = {}) {
+    super(message);
+    this.name = "EmailDeliveryError";
+    this.expose = true;
+    this.status = status;
+    if (cause) this.cause = cause;
+  }
+}
+
+/** Turns an Amazon SES error into a plain-language message, or null when it has no friendly form. */
+function describeSesError(err, to) {
+  const name = err?.name || "";
+  const msg = String(err?.message || "");
+
+  if (name === "MessageRejected" || name === "BadRequestException") {
+    // SES lists the identities that failed the check: the recipient while the account is in the sandbox,
+    // or the sender when SENDER_EMAIL_ID is not a verified identity.
+    const failed = msg.match(/failed the check in region [^:]+:\s*(.+?)\.?$/i);
+    if (/not verified/i.test(msg) && failed) {
+      const list = failed[1].toLowerCase();
+      if (list.includes(String(to).toLowerCase())) {
+        return new EmailDeliveryError(
+          `We could not send the email to ${to} because this address is not verified for sending yet. Use a verified email address, or ask the administrator to verify it.`,
+          { cause: err }
+        );
+      }
+      return new EmailDeliveryError(
+        "The email sender address is not verified. Please contact the administrator.",
+        { status: 502, cause: err }
+      );
+    }
+    if (/illegal address|invalid (email )?address|missing final '@domain'|domain.*(invalid|not valid)|malformed/i.test(msg)) {
+      return new EmailDeliveryError(`The email address ${to} is not valid. Please check it and try again.`, { cause: err });
+    }
+  }
+  if (name === "MailFromDomainNotVerifiedException") {
+    return new EmailDeliveryError("The email sender domain is not verified. Please contact the administrator.", { status: 502, cause: err });
+  }
+  if (name === "AccountSuspendedException" || name === "SendingPausedException") {
+    return new EmailDeliveryError("Email sending is currently paused. Please contact the administrator.", { status: 503, cause: err });
+  }
+  if (name === "TooManyRequestsException" || name === "LimitExceededException") {
+    return new EmailDeliveryError("Too many emails were sent in a short time. Please try again in a minute.", { status: 429, cause: err });
+  }
+  if (/AccessDenied|UnauthorizedOperation|not authorized/i.test(name + " " + msg)) {
+    return new EmailDeliveryError("The email service is not set up correctly. Please contact the administrator.", { status: 502, cause: err });
+  }
+  return null;
 }
 
 async function sendViaSes({ to, cc, bcc, subject, html, from }) {
@@ -76,7 +132,7 @@ async function sendViaSes({ to, cc, bcc, subject, html, from }) {
       })
     );
   } catch (err) {
-    throw new Error(`SES send failed: ${err.name}: ${err.message}`);
+    throw describeSesError(err, to) || new Error(`SES send failed: ${err.name}: ${err.message}`);
   }
 }
 
@@ -131,6 +187,26 @@ async function sendViaGmail({ to, cc, bcc, subject, html, from }) {
   });
 }
 
+/**
+ * Spaces outgoing emails at most EMAIL_MAX_PER_SECOND apart, in the order they were requested, so a burst
+ * of requests (many registrations at once) is sent steadily instead of all at the same moment. A request
+ * waits for its turn; if the line is already longer than MAX_QUEUE_WAIT_MS it is refused with a clear
+ * message instead of hanging until the web server times out. In-memory: it paces this process only.
+ */
+const MIN_GAP_MS = 1000 / env.EMAIL_MAX_PER_SECOND;
+const MAX_QUEUE_WAIT_MS = 20000;
+let nextSlotAt = 0;
+
+async function waitForSendSlot() {
+  const now = Date.now();
+  const startAt = Math.max(now, nextSlotAt);
+  if (startAt - now > MAX_QUEUE_WAIT_MS) {
+    throw new EmailDeliveryError("Too many emails are waiting to be sent right now. Please try again in a minute.", { status: 429 });
+  }
+  nextSlotAt = startAt + MIN_GAP_MS;
+  if (startAt > now) await new Promise((resolve) => setTimeout(resolve, startAt - now));
+}
+
 const DRY_RUN_LOG = path.join(__dirname, "../../../logs/dry-run-emails.log");
 
 function writeDryRunLog(entry) {
@@ -159,6 +235,8 @@ async function sendRawEmail({ to, subject, html, cc = [], bcc = [], from }) {
   }
 
   const provider = getEmailProvider();
+
+  await waitForSendSlot();
 
   if (provider === "ses") {
     await sendViaSes({ to, cc, bcc, subject, html, from });
@@ -220,4 +298,4 @@ async function verifyEmailConnection() {
   }
 }
 
-module.exports = { sendRawEmail, isSesConfigured, isBrevoConfigured, isGmailConfigured, verifyEmailConnection };
+module.exports = { sendRawEmail, EmailDeliveryError, describeSesError, isSesConfigured, isBrevoConfigured, isGmailConfigured, verifyEmailConnection };

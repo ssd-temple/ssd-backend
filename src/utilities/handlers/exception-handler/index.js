@@ -39,6 +39,12 @@ function exceptionHandler({ res, error, statusCode }) {
 
   console.error(">>> SSD-Backend error:", error);
 
+  // Errors a developer wrote a user-facing message for (e.g. EmailDeliveryError) opt in with
+  // `expose: true`; their message is returned as-is instead of the generic one below.
+  if (error?.expose === true && error.message) {
+    return res.status(statusCode || error.status || 400).json({ success: false, message: error.message });
+  }
+
   if (error?.code === 11000) {
     return res.status(statusCode || 409).json({ success: false, message: describeDuplicateKeyError(error) });
   }

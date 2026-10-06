@@ -54,6 +54,9 @@ module.exports = {
   // On AWS leave BREVO_* / GMAIL_* empty: SES then uses the EC2 instance role, no keys.
   // SENDER_EMAIL_ID must be a verified SES identity (an address or a domain) in AWS_REGION.
   AWS_REGION: process.env.AWS_REGION || "ap-southeast-1",
+  // Outgoing emails are spaced out so a burst never exceeds the provider's sending speed
+  // (SES allows 1/second in the sandbox, 14/second at first once approved). Optional.
+  EMAIL_MAX_PER_SECOND: Math.max(1, Number(process.env.EMAIL_MAX_PER_SECOND) || 5),
   BREVO_API_KEY: process.env.BREVO_API_KEY || "",
   GMAIL_USER: process.env.GMAIL_USER || "",
   GMAIL_APP_PASSWORD: process.env.GMAIL_APP_PASSWORD || "",
