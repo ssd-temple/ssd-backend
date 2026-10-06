@@ -1,5 +1,9 @@
 require("dotenv").config();
 
+function origin(value) {
+  return String(value || "").replace(/\/$/, "");
+}
+
 /**
  * Every module reads config from here, never from process.env directly —
  * one place to see what the whole app depends on, and one place to add a
@@ -29,7 +33,11 @@ module.exports = {
   RESET_TOKEN_TTL_MINUTES: Number(process.env.RESET_TOKEN_TTL_MINUTES || 30),
   MOBILE_OTP_TTL_MINUTES: Number(process.env.MOBILE_OTP_TTL_MINUTES || 5),
 
-  ADMIN_APP_URL: process.env.ADMIN_APP_URL || "http://localhost:5001",
+  // Staff activation and password-reset links. Customer links use CUSTOMER_APP_URL.
+  ADMIN_APP_URL: origin(process.env.ADMIN_APP_URL || "http://localhost:5001"),
+  // Devotee activation and password-reset links. Falls back to the admin
+  // origin when unset, so a local setup with one frontend still works.
+  CUSTOMER_APP_URL: origin(process.env.CUSTOMER_APP_URL || process.env.ADMIN_APP_URL || "http://localhost:5001"),
 
   // The email header logo. A `localhost` ADMIN_APP_URL can never be reached
   // by a real mail client (Gmail/Outlook fetch images through their own

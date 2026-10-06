@@ -108,7 +108,7 @@ async function create(req, res) {
 
     // Staff-created, so the devotee still goes through the customer portal to
     // activate — never /admin — exactly like public registration.
-    const activationUrl = `${env.ADMIN_APP_URL}/customer/activate/${rawToken}`;
+    const activationUrl = `${env.CUSTOMER_APP_URL}/customer/activate/${rawToken}`;
     await sendTemplatedEmail("ACCOUNT_ACTIVATION", entity._id, user.email, {
       name: user.name,
       activationUrl,
