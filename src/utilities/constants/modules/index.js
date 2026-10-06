@@ -18,7 +18,7 @@
  *                      reading their own record and needs no module grant)
  *   roles            → GET/POST/PUT/DELETE /roles, PUT /roles/:id/permissions, GET /modules
  *   email-templates  → CRUD /notifications/email-templates
- *                      CRUD /notifications/email-template-mappings
+ *   email-template-mappings → CRUD /notifications/email-template-mappings
  *   cms-menus        → GET /cms/meta, CRUD /cms/menus
  *   cms-pages        → CRUD /cms/pages
  *   inventory        → GET /inventory/options, /available-stock, /low-stock, /history
@@ -60,7 +60,8 @@ const AVAILABLE_MODULES = [
   { key: "users", label: "Admin Users", group: "Administration" },
   { key: "customers", label: "Customers", group: "Administration" },
   { key: "roles", label: "Roles & Permissions", group: "Administration" },
-  { key: "email-templates", label: "Email Templates", group: "Templates Configuration" },
+  { key: "email-templates", label: "Email Template", group: "Templates Configuration" },
+  { key: "email-template-mappings", label: "Email Template Mapping", group: "Templates Configuration" },
   { key: "printing-groups", label: "Printing Group Master", group: "Masters" },
   { key: "print-split-setting", label: "Print Split Setting", group: "Masters" },
   { key: "units", label: "Unit Master", group: "Masters" },

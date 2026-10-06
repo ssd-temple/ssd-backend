@@ -18,6 +18,7 @@ const DEFAULT_ROLES = [
       { module: "users", view: true, edit: true, fullAccess: false },
       { module: "roles", view: true, edit: false, fullAccess: false },
       { module: "email-templates", view: true, edit: true, fullAccess: false },
+      { module: "email-template-mappings", view: true, edit: true, fullAccess: false },
     ],
   },
   {

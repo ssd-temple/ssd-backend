@@ -3,6 +3,7 @@ const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const makeCrudController = require("../../common/factories/crud-controller");
 const { exceptionHandler } = require("../../utilities/handlers");
+const { USER_TYPES } = require("../../utilities/constants/user-types");
 
 const EmailTemplate = require("../../models/email-templates");
 const EmailTemplateMapping = require("../../models/email-template-mappings");
@@ -63,7 +64,18 @@ async function remove(req, res) {
   return controller.remove(req, res);
 }
 
-router.get("/email-templates", requirePermission("email-templates", "view"), controller.list);
+function canViewTemplates(req, res, next) {
+  if (req.auth?.userType === USER_TYPES.SUPER_ADMIN) return next();
+  const permissions = req.auth?.permissions || {};
+  if (permissions["email-templates"]?.view || permissions["email-template-mappings"]?.view) return next();
+  return exceptionHandler({
+    res,
+    error: "You don't have view access to email templates.",
+    statusCode: 403,
+  });
+}
+
+router.get("/email-templates", canViewTemplates, controller.list);
 router.post(
   "/email-templates",
   requirePermission("email-templates", "fullAccess"),

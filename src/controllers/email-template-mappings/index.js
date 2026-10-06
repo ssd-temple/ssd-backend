@@ -74,23 +74,34 @@ async function update(req, res) {
   return controller.update(req, res);
 }
 
-router.get("/email-template-mappings/options", requirePermission("email-templates", "view"), options);
-router.get("/email-template-mappings", requirePermission("email-templates", "view"), controller.list);
+function canViewOptions(req, res, next) {
+  if (req.auth?.userType === USER_TYPES.SUPER_ADMIN) return next();
+  const permissions = req.auth?.permissions || {};
+  if (permissions["email-templates"]?.view || permissions["email-template-mappings"]?.view) return next();
+  return exceptionHandler({
+    res,
+    error: "You don't have view access to email template mappings.",
+    statusCode: 403,
+  });
+}
+
+router.get("/email-template-mappings/options", canViewOptions, options);
+router.get("/email-template-mappings", requirePermission("email-template-mappings", "view"), controller.list);
 router.post(
   "/email-template-mappings",
-  requirePermission("email-templates", "fullAccess"),
+  requirePermission("email-template-mappings", "fullAccess"),
   validateBody(createSchema),
   create
 );
 router.put(
   "/email-template-mappings/:id",
-  requirePermission("email-templates", "edit"),
+  requirePermission("email-template-mappings", "edit"),
   validateBody(updateSchema),
   update
 );
 router.delete(
   "/email-template-mappings/:id",
-  requirePermission("email-templates", "fullAccess"),
+  requirePermission("email-template-mappings", "fullAccess"),
   controller.remove
 );
 
