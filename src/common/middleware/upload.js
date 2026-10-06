@@ -245,6 +245,13 @@ const uploadFoodPackageImage = makeImageUpload({
   label: "Food Package image",
 });
 
+const uploadEntityLogo = makeImageUpload({
+  formField: "logoUrl",
+  folder: "ssd-temple/entities",
+  label: "Entity logo",
+  maxBytes: 300 * 1024,
+});
+
 /**
  * Multipart fields arrive as strings. Nested arrays (categoryDetails,
  * deityMapping) are JSON.stringified by the frontend; booleans/nulls are
@@ -379,6 +386,7 @@ module.exports = {
   uploadHallPackageImage,
   uploadFoodMenuItemImage,
   uploadFoodPackageImage,
+  uploadEntityLogo,
   uploadCmsImage,
   uploadHallMedia,
   hydrateMultipartBody,

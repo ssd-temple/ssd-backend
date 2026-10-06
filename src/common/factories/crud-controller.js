@@ -15,13 +15,17 @@ const { findBlockingReference } = require("../utils/reference-guard");
  * by default; a caller only needs to pass it for masters something else
  * actually references (see reference-guard.js for the matching rules).
  *
+ * `decorateItems` — optional async (docs) => rows, so a list can attach
+ * fields that aren't on the model (Email Template's `isMapped`, for
+ * example) without each master copying the pagination query.
+ *
  * `sort` — a Mongoose sort spec for list(), defaulting to `{createdAt: -1}`
  * (every existing master's original, implicit behaviour). Pass a different
  * spec for a master with its own meaningful order — e.g. Deity Master's
  * `{ displayOrder: 1, name: 1 }`, so admin-assigned ordering wins and
  * deities sharing the same value still land in a stable, alphabetical spot.
  */
-function makeCrudController(Model, { searchFields = [], populate = [], referencedBy = [], sort = { createdAt: -1 } } = {}) {
+function makeCrudController(Model, { searchFields = [], populate = [], referencedBy = [], sort = { createdAt: -1 }, decorateItems } = {}) {
   async function list(req, res) {
     try {
       const page = Math.max(1, Number(req.query.page) || 1);
@@ -41,7 +45,8 @@ function makeCrudController(Model, { searchFields = [], populate = [], reference
         .limit(pageSize);
       populate.forEach((p) => { query = query.populate(p); });
 
-      const [items, total] = await Promise.all([query.exec(), Model.countDocuments(filter)]);
+      const [rawItems, total] = await Promise.all([query.exec(), Model.countDocuments(filter)]);
+      const items = decorateItems ? await decorateItems(rawItems) : rawItems;
 
       return responseHandler({ res, response: { items, total, page, pageSize } });
     } catch (error) {

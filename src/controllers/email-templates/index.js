@@ -2,6 +2,7 @@ const express = require("express");
 const requirePermission = require("../../common/middleware/require-permission");
 const validateBody = require("../../common/middleware/validate");
 const makeCrudController = require("../../common/factories/crud-controller");
+const { exceptionHandler } = require("../../utilities/handlers");
 
 const EmailTemplate = require("../../models/email-templates");
 const EmailTemplateMapping = require("../../models/email-template-mappings");
@@ -13,10 +14,55 @@ const { createSchema, updateSchema } = require("./request-objects");
 // each router used to apply its own copy).
 const router = express.Router();
 
+const MAPPED_MESSAGE =
+  "This email template is already used by an Email Template Mapping, so it cannot be deactivated or deleted. Update or remove that mapping first.";
+
+async function mappedTemplateMessage(id) {
+  const found = await EmailTemplateMapping.findOne(
+    EmailTemplateMapping.notDeletedFilter({ template: id })
+  ).select("_id");
+  return found ? MAPPED_MESSAGE : null;
+}
+
 const controller = makeCrudController(EmailTemplate, {
-  searchFields: ["name", "subject"],
+  searchFields: ["name", "subject", "description"],
   referencedBy: [{ model: EmailTemplateMapping, field: "template", label: "Email Template Mapping" }],
+  decorateItems: async (docs) => {
+    const ids = docs.map((doc) => doc._id);
+    const mapped = await EmailTemplateMapping.distinct(
+      "template",
+      EmailTemplateMapping.notDeletedFilter({ template: { $in: ids } })
+    );
+    const mappedIds = new Set(mapped.map(String));
+    return docs.map((doc) => ({
+      ...doc.toObject(),
+      isMapped: mappedIds.has(String(doc._id)),
+    }));
+  },
 });
+
+async function update(req, res) {
+  // The template is only a starting copy. Editing the message stays allowed
+  // and does not write back to mappings that already copied it. Turning an
+  // active template inactive is the one update a mapping still blocks.
+  if (Number(req.body?.status) === 0) {
+    const current = await EmailTemplate.findOne(
+      EmailTemplate.notDeletedFilter({ _id: req.params.id })
+    ).select("status");
+    if (current && current.status !== 0) {
+      const message = await mappedTemplateMessage(req.params.id);
+      if (message) return exceptionHandler({ res, error: message, statusCode: 409 });
+    }
+  }
+  return controller.update(req, res);
+}
+
+async function remove(req, res) {
+  const message = await mappedTemplateMessage(req.params.id);
+  if (message) return exceptionHandler({ res, error: message, statusCode: 409 });
+  return controller.remove(req, res);
+}
+
 router.get("/email-templates", requirePermission("email-templates", "view"), controller.list);
 router.post(
   "/email-templates",
@@ -28,12 +74,12 @@ router.put(
   "/email-templates/:id",
   requirePermission("email-templates", "edit"),
   validateBody(updateSchema),
-  controller.update
+  update
 );
 router.delete(
   "/email-templates/:id",
   requirePermission("email-templates", "fullAccess"),
-  controller.remove
+  remove
 );
 
 module.exports = router;

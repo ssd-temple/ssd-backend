@@ -7,6 +7,11 @@ const { auditablePlugin, activeUniqueIndexOptions } = require("../../common/plug
  * entities can point the same event ("ACCOUNT_ACTIVATION") at two
  * different templates (different branding, different signature), without
  * either template needing to know about the other.
+ *
+ * `subject` and `content` are a copy taken from the chosen Email Template
+ * when the mapping is saved. Editing them here does not write back to that
+ * template. Sending uses these fields (the shell around `content` — logo,
+ * card — comes from the entity, not from the template).
  */
 const emailTemplateMappingSchema = new mongoose.Schema({
   entity: { type: mongoose.Schema.Types.ObjectId, ref: "Entity", required: true },
@@ -16,6 +21,8 @@ const emailTemplateMappingSchema = new mongoose.Schema({
   fromOverride: { type: String, default: null },
   cc: { type: [String], default: [] },
   bcc: { type: [String], default: [] },
+  subject: { type: String, default: "" },
+  content: { type: String, default: "" },
 });
 
 emailTemplateMappingSchema.plugin(auditablePlugin);

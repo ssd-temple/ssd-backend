@@ -7,9 +7,9 @@
  * RULE: a module key only belongs here if real routes are actually gated on
  * it. A key with no API behind it is worse than useless — it renders a
  * toggle in the Permission screen that silently grants nothing, which reads
- * to an admin as "access denied is broken". ("entities" used to sit here
- * for exactly that reason; there are no /entities routes, so it's gone
- * until the Entity Master is built.)
+ * to an admin as "access denied is broken". Entity Master is deliberately
+ * absent: it is super-admin only (userType), not a grant a Role can hand
+ * out, so it has no module key.
  *
  * Current key → route mapping:
  *   users            → GET/POST/PUT  /users
@@ -60,7 +60,7 @@ const AVAILABLE_MODULES = [
   { key: "users", label: "Admin Users", group: "Administration" },
   { key: "customers", label: "Customers", group: "Administration" },
   { key: "roles", label: "Roles & Permissions", group: "Administration" },
-  { key: "email-templates", label: "Email Templates", group: "Administration" },
+  { key: "email-templates", label: "Email Templates", group: "Templates Configuration" },
   { key: "printing-groups", label: "Printing Group Master", group: "Masters" },
   { key: "print-split-setting", label: "Print Split Setting", group: "Masters" },
   { key: "units", label: "Unit Master", group: "Masters" },

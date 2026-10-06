@@ -5,6 +5,7 @@ const createSchema = Joi.object({
   subject: Joi.string().trim().min(1).required(),
   htmlContent: Joi.string().min(1).required(),
   description: Joi.string().allow("").default(""),
+  status: Joi.number().valid(0, 1).default(1),
 });
 
 const updateSchema = Joi.object({

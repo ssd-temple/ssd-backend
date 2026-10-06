@@ -25,6 +25,7 @@ const generalItemRoutes = require("../controllers/general-items");
 const eventRoutes = require("../controllers/events");
 const nakshathiramRoutes = require("../controllers/nakshathirams");
 const paymentModeRoutes = require("../controllers/payment-modes");
+const entityRoutes = require("../controllers/entities");
 const translateRoutes = require("../controllers/translate");
 const posRoutes = require("../controllers/pos");
 const posDisplayRoutes = require("../controllers/pos-display");
@@ -124,6 +125,7 @@ mastersRouter.use(generalItemRoutes);
 mastersRouter.use(eventRoutes);
 mastersRouter.use(nakshathiramRoutes);
 mastersRouter.use(paymentModeRoutes);
+mastersRouter.use(entityRoutes);
 mastersRouter.use(translateRoutes);
 router.use("/masters", mastersRouter);
 

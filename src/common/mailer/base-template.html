@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{templeName}}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#fbf6ea;">
+    <!-- ssd-email-shell -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fbf6ea;">
+      <tr>
+        <td align="center" style="padding:32px 12px;">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border:1px solid #e6d3a1;border-radius:12px;overflow:hidden;">
+            <tr>
+              <td align="center" style="padding:28px 32px 16px;background:#fffaf0;">
+                {{#if entityLogo}}
+                <img src="{{entityLogo}}" alt="{{templeName}}" width="160" style="display:inline-block;max-width:160px;width:160px;height:auto;border:0;outline:none;text-decoration:none;" />
+                {{/if}}
+              </td>
+            </tr>
+            <tr>
+              <td style="height:4px;background:#7c1527;font-size:0;line-height:0;">&nbsp;</td>
+            </tr>
+            <tr>
+              <td style="padding:28px 36px 36px;font-family:Georgia,serif;color:#5c4d33;font-size:15px;line-height:1.65;">
+                {{{body}}}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
