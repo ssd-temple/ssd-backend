@@ -4,27 +4,16 @@ const { User } = require("../../models/users");
 const mergeRolePermissions = require("../../utilities/helpers/merge-role-permissions");
 
 /**
- * Verifies the JWT, then re-reads the account and its permissions from the
- * database on every request. Both halves matter:
+ * Verifies the JWT, then re-reads the account from the database.
  *
- * 1. ACCOUNT STATE MUST BE LIVE. A JWT is valid for 8 hours. If deactivating
- *    a user (or their `accessUpto` lapsing) only took effect at login, then
- *    "deactivate" would mean "…in up to 8 hours", which is not what anyone
- *    clicking that toggle believes it means. Revoking access has to revoke
- *    access now.
+ * Account state stays live: deactivating a user, or their access period
+ * ending, locks them out on the next request.
  *
- * 2. PERMISSIONS MUST BE LIVE TOO — the token's `permissions` claim is a UI
- *    hint only, never the authority. The token still carries it so the
- *    Admin Panel can render its nav without a second round-trip, but this
- *    middleware overwrites `req.auth.permissions` with what the database
- *    actually says before any route guard reads it. Trusting the claim
- *    would mean a permission removed from a role stays exploitable for the
- *    rest of that session. (FSD §2.2 only sets a floor — "changes apply
- *    after re-login" — and applying them immediately clears that floor.)
- *
- * The cost is one indexed find-by-id with a populate per request. For an
- * admin panel used by temple staff that is a rounding error next to being
- * unable to revoke access.
+ * Module permissions stay as they were at login. The token carries that
+ * snapshot, and both the side menu and the route checks use it. Unticking a
+ * module leaves the open session unchanged; the menu and the page update
+ * together the next time that user signs in. A token minted before this
+ * claim existed falls back to the live role grants.
  */
 async function authGuard(req, res, next) {
   let payload;
@@ -66,7 +55,10 @@ async function authGuard(req, res, next) {
       userType: user.userType,
       entityId: assignment ? String(assignment.entity) : null,
       roles: roles.map((r) => String(r._id)),
-      permissions: mergeRolePermissions(roles),
+      permissions:
+        payload.permissions && typeof payload.permissions === "object"
+          ? payload.permissions
+          : mergeRolePermissions(roles),
       user,
     };
 

@@ -4,12 +4,9 @@ const { USER_TYPES } = require("../../utilities/constants/user-types");
 /**
  * Gates a route on a specific module + level (view/edit/fullAccess).
  *
- * Reads `req.auth.permissions`, which auth-guard.js has already resolved
- * from the database for this request — deliberately NOT the `permissions`
- * claim carried in the JWT. That claim exists only so the Admin Panel can
- * render its navigation without an extra round-trip; treating it as the
- * authority here would leave every revoked permission exploitable until the
- * token expired.
+ * Reads `req.auth.permissions`, the grant snapshot taken at login and
+ * carried on the token. A role change applies when that user signs in
+ * again, so the menu and these checks stay in step for the whole session.
  *
  * SUPER_ADMIN bypasses this entirely, same as everywhere else in the app.
  * Mount it after authGuard and adminOnly.

@@ -3,10 +3,10 @@ const env = require("../../config/env");
 
 /**
  * The token carries the resolved *default* entity + that entity's roles,
- * plus a `permissions` snapshot merged from those roles (FSD §2.2 — see
- * common/middleware/require-permission.js for why this is a snapshot, not
- * a live lookup). `permissions` is precomputed by the caller (roleService
- * .resolveMergedPermissions) rather than fetched in here, so this module
+ * plus a `permissions` snapshot merged from those roles. Route checks use
+ * this snapshot for the life of the token, so a later role edit shows up
+ * only after the next sign-in. `permissions` is precomputed by the caller
+ * (resolveMergedPermissions) rather than fetched in here, so this module
  * stays a pure signer/verifier with no dependency on the Role model.
  */
 function signSessionToken(user, permissions = {}) {

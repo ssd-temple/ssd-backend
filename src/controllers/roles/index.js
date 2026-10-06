@@ -54,9 +54,8 @@ function assertRoleIsEditable(req, role) {
  * to have applied it) after two escalation checks: the actor can't grant
  * anything they don't hold, and can't edit a role they hold themselves.
  *
- * Because permissions are resolved live per request (see auth-guard.js),
- * saving here takes effect on the affected users' very next request — no
- * re-login needed, and no window where a just-revoked permission still works.
+ * The saved grants apply the next time a user with this role signs in.
+ * An open session keeps the menu and access it received at login.
  */
 async function updatePermissions(req, res) {
   try {
