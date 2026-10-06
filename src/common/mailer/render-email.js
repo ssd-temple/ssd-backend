@@ -33,20 +33,26 @@ function peelToInner(html) {
   return inner.trim();
 }
 
-/** Gmail drops gradient backgrounds, which leaves the label as plain text. A solid cell stays a button. */
+function buttonLink(href, label) {
+  const url = String(href || "").replace(/"/g, "&quot;");
+  const text = String(label || "Open").replace(/<[^>]+>/g, "").trim() || "Open";
+  return (
+    `<div align="center" style="margin:28px 0;text-align:center;">` +
+    `<a href="${url}" target="_blank" style="background-color:#7c1527;color:#ffffff;display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;line-height:20px;text-align:center;text-decoration:none;padding:14px 36px;border-radius:8px;">${text}</a>` +
+    `</div>`
+  );
+}
+
+/** Gmail drops gradient backgrounds and then the label is ordinary text with no obvious link. */
 function solidifyButtons(html) {
   return String(html || "").replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (full, attrs, label) => {
     const hrefMatch = attrs.match(/href\s*=\s*(['"])([\s\S]*?)\1/i);
     if (!hrefMatch) return full;
-    if (!/display\s*:\s*inline-block/i.test(attrs) && !/background/i.test(attrs)) return full;
-    const href = hrefMatch[2].replace(/"/g, "%22");
-    const text = label.replace(/<[^>]+>/g, "").trim() || "Open";
-    return (
-      `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;">` +
-      `<tr><td bgcolor="#7c1527" style="border-radius:8px;background-color:#7c1527;">` +
-      `<a href="${href}" style="display:inline-block;padding:12px 28px;background-color:#7c1527;color:#ffffff;text-decoration:none;font-weight:600;font-family:Georgia,serif;">${text}</a>` +
-      `</td></tr></table>`
-    );
+    const href = hrefMatch[2];
+    if (!/^https?:\/\//i.test(href)) return full;
+    const styled = /display\s*:\s*inline-block|background|padding\s*:/i.test(attrs);
+    if (!styled) return full;
+    return buttonLink(href, label);
   });
 }
 
@@ -75,7 +81,7 @@ function htmlToText(html) {
  */
 function renderEmailHtml({ body, entityLogo = "", templeName = "Sri Siva Durga Temple" }) {
   const raw = String(body || "");
-  if (isAlreadyWrapped(raw)) return raw;
+  if (isAlreadyWrapped(raw)) return solidifyButtons(raw);
   return compiledShell({
     body: solidifyButtons(peelToInner(raw)),
     entityLogo: entityLogo || "",

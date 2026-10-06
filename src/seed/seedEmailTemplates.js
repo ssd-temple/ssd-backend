@@ -2,7 +2,7 @@ const EmailTemplate = require("../models/email-templates");
 const EmailTemplateMapping = require("../models/email-template-mappings");
 
 const button = (href, label) =>
-  `<p style="margin:24px 0;"><a href="${href}" style="display:inline-block;padding:12px 28px;background:#7c1527;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;">${label}</a></p>`;
+  `<div align="center" style="margin:28px 0;text-align:center;"><a href="${href}" target="_blank" style="background-color:#7c1527;color:#ffffff;display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;line-height:20px;text-align:center;text-decoration:none;padding:14px 36px;border-radius:8px;">${label}</a></div>`;
 
 /**
  * Inner message only. The logo and the card around it are added when the
