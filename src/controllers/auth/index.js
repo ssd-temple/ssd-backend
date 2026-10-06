@@ -2,7 +2,6 @@ const express = require("express");
 const env = require("../../config/env");
 const validateBody = require("../../common/middleware/validate");
 const authGuard = require("../../common/middleware/auth-guard");
-const { authLimiter } = require("../../common/middleware/rate-limit");
 const { responseHandler, exceptionHandler } = require("../../utilities/handlers");
 const { hashPassword, comparePassword, assertStrongPassword } = require("../../common/utils/password");
 const { signSessionToken } = require("../../common/utils/jwt");
@@ -296,22 +295,18 @@ async function updatePaginationCount(req, res) {
 // Mounted at /auth — see routes/index.js for why the prefix lives there.
 const router = express.Router();
 
-// authLimiter on every route below: these are the only ones in the whole
-// service reachable without a valid session token, which makes them the
-// only ones where repeated guessing (login) or spam (register,
-// forgot-password) is even possible. See common/middleware/rate-limit.js.
-router.post("/login", authLimiter, validateBody(loginSchema), login);
-router.post("/register", authLimiter, validateBody(registerSchema), register);
+router.post("/login", validateBody(loginSchema), login);
+router.post("/register", validateBody(registerSchema), register);
 
 // Read-only — let Set-Password/Reset-Password greet the person by name and
 // check password strength against their real name/email/mobile *before*
 // they submit, instead of only finding out at the end.
-router.get("/activation/:token", authLimiter, activationTokenInfo);
-router.get("/reset-password/:token", authLimiter, resetTokenInfo);
+router.get("/activation/:token", activationTokenInfo);
+router.get("/reset-password/:token", resetTokenInfo);
 
-router.post("/activate", authLimiter, validateBody(activateSchema), activate);
-router.post("/forgot-password", authLimiter, validateBody(forgotPasswordSchema), forgotPassword);
-router.post("/reset-password", authLimiter, validateBody(resetPasswordSchema), resetPassword);
+router.post("/activate", validateBody(activateSchema), activate);
+router.post("/forgot-password", validateBody(forgotPasswordSchema), forgotPassword);
+router.post("/reset-password", validateBody(resetPasswordSchema), resetPassword);
 
 router.put("/pagination-count", authGuard, validateBody(paginationCountSchema), updatePaginationCount);
 
