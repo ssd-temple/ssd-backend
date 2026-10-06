@@ -58,6 +58,9 @@ async function sendTemplatedEmail(event, entityId, to, data = {}) {
   const logo = publicLogo(entity?.logoUrl) || publicLogo(env.EMAIL_LOGO_URL);
   const templeName = entity?.templeName || entity?.name || "Sri Siva Durga Temple";
   const html = renderEmailHtml({ body: inner, entityLogo: logo, templeName });
+  const from = mapping.fromOverride || undefined;
+  const fromDomain = String(from || env.SENDER_EMAIL_ID || "").split("@")[1] || "";
+  const fromName = /^(gmail|googlemail)\.com$/i.test(fromDomain) ? undefined : templeName;
 
   return sendRawEmail({
     to,
@@ -66,8 +69,8 @@ async function sendTemplatedEmail(event, entityId, to, data = {}) {
     text: htmlToText(html),
     cc: mapping.cc,
     bcc: mapping.bcc,
-    from: mapping.fromOverride || undefined,
-    fromName: templeName,
+    from,
+    fromName,
   });
 }
 

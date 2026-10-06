@@ -44,10 +44,8 @@ function solidifyButtons(html) {
     return (
       `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;">` +
       `<tr><td bgcolor="#7c1527" style="border-radius:8px;background-color:#7c1527;">` +
-      `<a href="${href}" target="_blank" style="display:inline-block;padding:12px 28px;background-color:#7c1527;color:#ffffff;text-decoration:none;font-weight:600;font-family:Georgia,serif;">${text}</a>` +
-      `</td></tr></table>` +
-      `<p style="margin:0 0 16px;font-size:13px;line-height:1.5;color:#7d6c4d;">If the button does not open, copy this link into your browser:<br>` +
-      `<a href="${href}" target="_blank" style="color:#7c1527;word-break:break-all;">${href}</a></p>`
+      `<a href="${href}" style="display:inline-block;padding:12px 28px;background-color:#7c1527;color:#ffffff;text-decoration:none;font-weight:600;font-family:Georgia,serif;">${text}</a>` +
+      `</td></tr></table>`
     );
   });
 }
