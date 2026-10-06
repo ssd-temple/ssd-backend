@@ -112,12 +112,39 @@ function describeSesError(err, to) {
   return null;
 }
 
-async function sendViaSes({ to, cc, bcc, subject, html, from }) {
+function addressOf(from) {
+  const raw = String(from || env.SENDER_EMAIL_ID || "").trim();
+  const wrapped = raw.match(/<([^>]+)>/);
+  return (wrapped ? wrapped[1] : raw).trim();
+}
+
+function formatFrom(from, fromName) {
+  const address = addressOf(from);
+  const label = String(fromName || "").trim().replace(/"/g, "");
+  if (!address || !label) return address;
+  return `"${label}" <${address}>`;
+}
+
+/**
+ * A Gmail address sent through Brevo fails Gmail's sender check, so the
+ * message lands in spam and Gmail turns images and links off. When the
+ * sender is the configured Gmail account, send through Gmail itself.
+ */
+function chooseProvider(from) {
+  const address = addressOf(from).toLowerCase();
+  const gmailUser = String(env.GMAIL_USER || "").trim().toLowerCase();
+  if (isGmailConfigured() && gmailUser && address === gmailUser) return "gmail";
+  if (isBrevoConfigured()) return "brevo";
+  if (isGmailConfigured()) return "gmail";
+  return "ses";
+}
+
+async function sendViaSes({ to, cc, bcc, subject, html, text, from, fromName }) {
   const { SendEmailCommand } = require("@aws-sdk/client-sesv2");
   try {
     await getSes().send(
       new SendEmailCommand({
-        FromEmailAddress: from || env.SENDER_EMAIL_ID,
+        FromEmailAddress: formatFrom(from, fromName),
         Destination: {
           ToAddresses: [to],
           ...(cc?.length ? { CcAddresses: cc } : {}),
@@ -126,7 +153,10 @@ async function sendViaSes({ to, cc, bcc, subject, html, from }) {
         Content: {
           Simple: {
             Subject: { Data: subject, Charset: "UTF-8" },
-            Body: { Html: { Data: html, Charset: "UTF-8" } },
+            Body: {
+              Html: { Data: html, Charset: "UTF-8" },
+              ...(text ? { Text: { Data: text, Charset: "UTF-8" } } : {}),
+            },
           },
         },
       })
@@ -143,8 +173,8 @@ function getEmailProvider() {
   return "ses";
 }
 
-async function sendViaBrevo({ to, cc, bcc, subject, html, from }) {
-  const fromEmail = from || env.SENDER_EMAIL_ID;
+async function sendViaBrevo({ to, cc, bcc, subject, html, text, from, fromName }) {
+  const fromEmail = addressOf(from);
 
   const res = await fetch(`${BREVO_API}/smtp/email`, {
     method: "POST",
@@ -154,12 +184,13 @@ async function sendViaBrevo({ to, cc, bcc, subject, html, from }) {
       Accept: "application/json",
     },
     body: JSON.stringify({
-      sender: { email: fromEmail },
+      sender: { email: fromEmail, ...(fromName ? { name: fromName } : {}) },
       to: [{ email: to }],
       ...(cc?.length ? { cc: cc.map((email) => ({ email })) } : {}),
       ...(bcc?.length ? { bcc: bcc.map((email) => ({ email })) } : {}),
       subject,
       htmlContent: html,
+      ...(text ? { textContent: text } : {}),
     }),
   });
 
@@ -175,10 +206,11 @@ async function sendViaBrevo({ to, cc, bcc, subject, html, from }) {
   }
 }
 
-async function sendViaGmail({ to, cc, bcc, subject, html, from }) {
+async function sendViaGmail({ to, cc, bcc, subject, html, text, from, fromName }) {
   const transport = getTransporter();
   await transport.sendMail({
-    from: from || env.SENDER_EMAIL_ID,
+    from: formatFrom(from, fromName),
+    text: text || undefined,
     to,
     cc: cc?.length ? cc : undefined,
     bcc: bcc?.length ? bcc : undefined,
@@ -226,30 +258,32 @@ function writeDryRunLog(entry) {
  * activation/forgot-password flow can be tested safely with no email
  * provider configured at all.
  */
-async function sendRawEmail({ to, subject, html, cc = [], bcc = [], from }) {
+async function sendRawEmail({ to, subject, html, text, cc = [], bcc = [], from, fromName }) {
+  const fromAddress = addressOf(from);
   if (env.DRY_RUN_NOTIFICATIONS) {
     console.log(`\n>>> [DRY RUN] Email NOT sent — would have gone to: ${to}`);
     console.log(`>>> [DRY RUN] Subject: ${subject}`);
-    writeDryRunLog({ timestamp: new Date().toISOString(), to, cc, bcc, subject, html });
+    writeDryRunLog({ timestamp: new Date().toISOString(), to, cc, bcc, from: fromAddress, subject, html });
     return { dryRun: true };
   }
 
-  const provider = getEmailProvider();
+  const provider = chooseProvider(fromAddress);
+  const message = { to, cc, bcc, subject, html, text, from: fromAddress, fromName };
 
   await waitForSendSlot();
 
   if (provider === "ses") {
-    await sendViaSes({ to, cc, bcc, subject, html, from });
+    await sendViaSes(message);
     return { sent: true, provider: "ses" };
   }
 
   if (provider === "brevo") {
-    await sendViaBrevo({ to, cc, bcc, subject, html, from });
+    await sendViaBrevo(message);
     return { sent: true, provider: "brevo" };
   }
 
   try {
-    await sendViaGmail({ to, cc, bcc, subject, html, from });
+    await sendViaGmail(message);
     return { sent: true, provider: "gmail" };
   } catch (err) {
     const msg = err.message || String(err);

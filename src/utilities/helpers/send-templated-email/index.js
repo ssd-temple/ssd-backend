@@ -3,7 +3,13 @@ const EmailTemplateMapping = require("../../../models/email-template-mappings");
 const Entity = require("../../../models/entities");
 const env = require("../../../config/env");
 const { sendRawEmail } = require("../../../common/mailer/transport");
-const { renderEmailHtml } = require("../../../common/mailer/render-email");
+const { renderEmailHtml, htmlToText } = require("../../../common/mailer/render-email");
+
+function publicLogo(url) {
+  const value = String(url || "").trim();
+  if (/^https:\/\//i.test(value) && !/localhost|127\.0\.0\.1/i.test(value)) return value;
+  return "";
+}
 
 /**
  * Event → entity → mapping → render → send. The one function every other
@@ -49,16 +55,19 @@ async function sendTemplatedEmail(event, entityId, to, data = {}) {
   const entity = entityId
     ? await Entity.findById(entityId).select("logoUrl templeName name")
     : null;
-  const logo = String(entity?.logoUrl || "").trim() || env.EMAIL_LOGO_URL || "";
+  const logo = publicLogo(entity?.logoUrl) || publicLogo(env.EMAIL_LOGO_URL);
   const templeName = entity?.templeName || entity?.name || "Sri Siva Durga Temple";
+  const html = renderEmailHtml({ body: inner, entityLogo: logo, templeName });
 
   return sendRawEmail({
     to,
     subject,
-    html: renderEmailHtml({ body: inner, entityLogo: logo, templeName }),
+    html,
+    text: htmlToText(html),
     cc: mapping.cc,
     bcc: mapping.bcc,
     from: mapping.fromOverride || undefined,
+    fromName: templeName,
   });
 }
 

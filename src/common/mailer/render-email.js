@@ -7,18 +7,67 @@ const compiledShell = handlebars.compile(
 );
 
 /**
- * A message that already carries its own document (an older seeded
- * template, or HTML someone pasted in full) must not be wrapped a second
- * time. New templates store only the inner text; the shell adds the logo.
+ * Older saved messages still contain a full card and a baked-in logo.
+ * That card is removed so the shared shell can add the entity logo.
+ * A message that is already the shell is left as it is.
  */
 function isAlreadyWrapped(html) {
-  const value = String(html || "");
-  return (
+  return String(html || "").includes("ssd-email-shell");
+}
+
+function peelToInner(html) {
+  const value = String(html || "").trim();
+  if (!value || isAlreadyWrapped(value)) return value;
+  const legacy =
     /<!doctype html/i.test(value) ||
     /<html[\s>]/i.test(value) ||
-    value.includes("ssd-email-shell") ||
-    value.includes("font-family:Georgia,serif;background:#fbf6ea")
-  );
+    /font-family:\s*Georgia,serif;background:\s*#fbf6ea/i.test(value) ||
+    (/<img\b/i.test(value) && /<h1\b/i.test(value) && /<table\b/i.test(value));
+  if (!legacy) return value;
+
+  const withoutImages = value.replace(/<img\b[^>]*>/gi, "");
+  const start = withoutImages.search(/<h1\b/i);
+  let inner = start === -1 ? withoutImages : withoutImages.slice(start);
+  inner = inner.replace(/<p\b[^>]*>\s*Sri Siva Durga Temple\s*<\/p>/gi, "");
+  inner = inner.replace(/(?:<\/td>\s*<\/tr>\s*<\/table>\s*){1,3}(?:<\/div>\s*)*(?:<\/body>\s*<\/html>\s*)?$/i, "");
+  return inner.trim();
+}
+
+/** Gmail drops gradient backgrounds, which leaves the label as plain text. A solid cell stays a button. */
+function solidifyButtons(html) {
+  return String(html || "").replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (full, attrs, label) => {
+    const hrefMatch = attrs.match(/href\s*=\s*(['"])([\s\S]*?)\1/i);
+    if (!hrefMatch) return full;
+    if (!/display\s*:\s*inline-block/i.test(attrs) && !/background/i.test(attrs)) return full;
+    const href = hrefMatch[2].replace(/"/g, "%22");
+    const text = label.replace(/<[^>]+>/g, "").trim() || "Open";
+    return (
+      `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;">` +
+      `<tr><td bgcolor="#7c1527" style="border-radius:8px;background-color:#7c1527;">` +
+      `<a href="${href}" target="_blank" style="display:inline-block;padding:12px 28px;background-color:#7c1527;color:#ffffff;text-decoration:none;font-weight:600;font-family:Georgia,serif;">${text}</a>` +
+      `</td></tr></table>` +
+      `<p style="margin:0 0 16px;font-size:13px;line-height:1.5;color:#7d6c4d;">If the button does not open, copy this link into your browser:<br>` +
+      `<a href="${href}" target="_blank" style="color:#7c1527;word-break:break-all;">${href}</a></p>`
+    );
+  });
+}
+
+function htmlToText(html) {
+  return String(html || "")
+    .replace(/<a\b[^>]*href\s*=\s*(['"])([\s\S]*?)\1[^>]*>([\s\S]*?)<\/a>/gi, (_, _q, href, label) => {
+      const name = label.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+      return name && name !== href ? `${name}\n${href}` : href;
+    })
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>|<\/h1>|<\/h2>|<\/div>|<\/tr>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /**
@@ -27,13 +76,13 @@ function isAlreadyWrapped(html) {
  * The logo comes from the entity; this function does not look one up.
  */
 function renderEmailHtml({ body, entityLogo = "", templeName = "Sri Siva Durga Temple" }) {
-  const inner = String(body || "");
-  if (isAlreadyWrapped(inner)) return inner;
+  const raw = String(body || "");
+  if (isAlreadyWrapped(raw)) return raw;
   return compiledShell({
-    body: inner,
+    body: solidifyButtons(peelToInner(raw)),
     entityLogo: entityLogo || "",
     templeName: templeName || "Sri Siva Durga Temple",
   });
 }
 
-module.exports = { renderEmailHtml, isAlreadyWrapped };
+module.exports = { renderEmailHtml, isAlreadyWrapped, htmlToText };
