@@ -14,6 +14,7 @@ const findActiveEntityByCode = require("../../utilities/helpers/find-active-enti
 const findActiveRolesByIds = require("../../utilities/helpers/find-active-roles-by-ids");
 const findAllActiveRoles = require("../../utilities/helpers/find-all-active-roles");
 const ensureCustomerProfileForUser = require("../../utilities/helpers/ensure-customer-profile-for-user");
+const rollbackCreatedUser = require("../../utilities/helpers/rollback-created-user");
 const sendTemplatedEmail = require("../../utilities/helpers/send-templated-email");
 const createPendingUser = require("../../utilities/helpers/create-pending-user");
 const isUserEmailTaken = require("../../utilities/helpers/is-user-email-taken");
@@ -165,9 +166,7 @@ async function create(req, res) {
       statusCode: 201,
     });
   } catch (error) {
-    if (createdUser) {
-      await User.deleteOne({ _id: createdUser._id }).catch(() => {});
-    }
+    if (createdUser) await rollbackCreatedUser(createdUser._id);
     return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 403 : undefined });
   }
 }

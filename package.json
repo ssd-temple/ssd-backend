@@ -12,6 +12,7 @@
     "sync:pools": "node src/seed/syncPools.js",
     "seed:payment-modes": "node src/seed/seedPaymentModes.js",
     "seed:cms": "node src/seed/seedCms.js",
+    "cleanup:orphan-profiles": "node src/seed/removeOrphanCustomerProfiles.js",
     "seed:print-split-setting": "node src/seed/seedPrintSplitSetting.js",
     "migrate": "node src/seed/migrate.js",
     "backfill:gl-group-codes": "node src/seed/backfillGlGroupCodes.js"

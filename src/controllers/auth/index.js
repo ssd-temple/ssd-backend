@@ -17,6 +17,7 @@ const findUserByActivationToken = require("../../utilities/helpers/find-user-by-
 const findUserByResetToken = require("../../utilities/helpers/find-user-by-reset-token");
 const createPendingUser = require("../../utilities/helpers/create-pending-user");
 const createCustomerProfile = require("../../utilities/helpers/create-customer-profile");
+const rollbackCreatedUser = require("../../utilities/helpers/rollback-created-user");
 const { User } = require("../../models/users");
 const { USER_TYPES } = require("../../utilities/constants/user-types");
 const {
@@ -135,9 +136,7 @@ async function register(req, res) {
       statusCode: 201,
     });
   } catch (error) {
-    if (createdUser) {
-      await User.deleteOne({ _id: createdUser._id }).catch(() => {});
-    }
+    if (createdUser) await rollbackCreatedUser(createdUser._id);
     return exceptionHandler({ res, error });
   }
 }

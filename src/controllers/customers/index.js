@@ -19,6 +19,7 @@ const findActiveRoleByName = require("../../utilities/helpers/find-active-role-b
 const createPendingUser = require("../../utilities/helpers/create-pending-user");
 const createCustomerProfile = require("../../utilities/helpers/create-customer-profile");
 const sendTemplatedEmail = require("../../utilities/helpers/send-templated-email");
+const rollbackCreatedUser = require("../../utilities/helpers/rollback-created-user");
 const { adminUpdateSchema, adminCreateSchema } = require("./request-objects");
 
 const FAMILY_MEMBER_POPULATE = { path: "familyMembers.natchathiram", select: "name tamilName" };
@@ -119,9 +120,7 @@ async function create(req, res) {
       statusCode: 201,
     });
   } catch (error) {
-    if (createdUser) {
-      await User.deleteOne({ _id: createdUser._id }).catch(() => {});
-    }
+    if (createdUser) await rollbackCreatedUser(createdUser._id);
     return exceptionHandler({ res, error });
   }
 }
