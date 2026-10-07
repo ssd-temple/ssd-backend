@@ -93,6 +93,7 @@ async function list(req, res) {
       searchFields: ["name", "email", "mobileNumber", "uCode"],
     });
     if (req.query.userType) filter.userType = req.query.userType;
+    else if (req.query.excludeUserType) filter.userType = { $ne: req.query.excludeUserType };
     if (req.query.role) filter["entities.roles"] = req.query.role;
 
     const [items, total] = await Promise.all([
