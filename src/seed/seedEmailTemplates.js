@@ -24,7 +24,7 @@ ${button("{{activationUrl}}", "Set Your Password")}
     name: "Password Reset",
     event: "PASSWORD_RESET",
     subject: "Reset your password — Sri Siva Durga Temple",
-    htmlContent: `<p>Namaste {{name}},</p>
+    htmlContent: `<p>Dear {{name}},</p>
 <p>We received a request to reset your password. Use the button below to choose a new one.</p>
 ${button("{{resetUrl}}", "Reset Password")}
 <p style="color:#7d6c4d;font-size:13px;">This link expires in {{expiresInMinutes}} minutes. If you didn't request this, your password is still safe — just ignore this email.</p>`,
