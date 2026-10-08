@@ -13,6 +13,9 @@ const slotDetailSchema = new mongoose.Schema(
     startTime: { type: String, required: true },
     endTime: { type: String, required: true },
     totalSeats: { type: Number, default: 0 },
+    // Seats already sold for this slot. Maintained by the server only - the
+    // admin form shows it read-only and anything it sends is ignored.
+    bookedSeats: { type: Number, default: 0, min: 0 },
     status: { type: Number, enum: [0, 1], default: 1 },
   },
   { _id: false }
@@ -32,6 +35,12 @@ const eventSchema = new mongoose.Schema({
   subCategory: { type: mongoose.Schema.Types.ObjectId, ref: "SubCategory", default: null },
   deityMapping: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: "Deity" }], default: [] },
 
+  // SINGLE: one date. MULTIPLE: a hand-picked set of dates (`eventDates`).
+  // RANGE: every day from startDate to endDate. startDate/endDate are always
+  // filled in (the earliest and latest date), so listing, sorting and slot
+  // validation work the same whatever the type.
+  dateType: { type: String, enum: ["SINGLE", "MULTIPLE", "RANGE"], default: "RANGE" },
+  eventDates: { type: [Date], default: [] },
   startDate: { type: Date, required: true },
   endDate: { type: Date, required: true },
 
@@ -41,6 +50,10 @@ const eventSchema = new mongoose.Schema({
   salePrice: { type: Number, required: true, min: 0 },
   gstClassification: { type: String, required: true }, // APPLICABLE | EXEMPTED | OUT_OF_SCOPE — see utilities/constants/gst-classifications
   displayOrder: { type: Number, default: 1 },
+
+  isFamilyMembersRequired: { type: Boolean, default: false },
+  maxFamilyMembers: { type: Number, default: 2 },
+  termsAndConditions: { type: String, default: "" },
 
   posVisibility: { type: Boolean, default: true },
   publicVisibility: { type: Boolean, default: true },

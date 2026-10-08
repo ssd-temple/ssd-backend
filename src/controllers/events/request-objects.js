@@ -1,6 +1,8 @@
 const Joi = require("joi");
 const { GST_CLASSIFICATIONS } = require("../../utilities/constants/gst-classifications");
 
+const DATE_TYPES = ["SINGLE", "MULTIPLE", "RANGE"];
+
 const objectId = Joi.string().hex().length(24);
 
 const slotDetailEntry = Joi.object({
@@ -9,6 +11,7 @@ const slotDetailEntry = Joi.object({
   startTime: Joi.string().trim().min(1).max(10).required(),
   endTime: Joi.string().trim().min(1).max(10).required(),
   totalSeats: Joi.number().integer().min(0).default(0),
+  bookedSeats: Joi.number().integer().min(0).default(0), // ignored - see controllers/events
   status: Joi.number().valid(0, 1).default(1),
 });
 
@@ -24,6 +27,8 @@ const createSchema = Joi.object({
   subCategory: objectId.allow(null).default(null),
   deityMapping: Joi.array().items(objectId).default([]),
 
+  dateType: Joi.string().valid(...DATE_TYPES).default("RANGE"),
+  eventDates: Joi.array().items(Joi.date()).default([]),
   startDate: Joi.date().required(),
   endDate: Joi.date().required(),
 
@@ -35,6 +40,10 @@ const createSchema = Joi.object({
     .valid(...GST_CLASSIFICATIONS)
     .required(),
   displayOrder: Joi.number().integer().min(0).default(1),
+
+  isFamilyMembersRequired: Joi.boolean().default(false),
+  maxFamilyMembers: Joi.number().integer().min(1).default(2),
+  termsAndConditions: Joi.string().allow("").default(""),
 
   posVisibility: Joi.boolean().default(true),
   publicVisibility: Joi.boolean().default(true),
@@ -54,6 +63,8 @@ const updateSchema = Joi.object({
   subCategory: objectId.allow(null),
   deityMapping: Joi.array().items(objectId),
 
+  dateType: Joi.string().valid(...DATE_TYPES),
+  eventDates: Joi.array().items(Joi.date()),
   startDate: Joi.date(),
   endDate: Joi.date(),
 
@@ -63,6 +74,10 @@ const updateSchema = Joi.object({
   salePrice: Joi.number().min(0),
   gstClassification: Joi.string().valid(...GST_CLASSIFICATIONS),
   displayOrder: Joi.number().integer().min(0),
+
+  isFamilyMembersRequired: Joi.boolean(),
+  maxFamilyMembers: Joi.number().integer().min(1),
+  termsAndConditions: Joi.string().allow(""),
 
   posVisibility: Joi.boolean(),
   publicVisibility: Joi.boolean(),

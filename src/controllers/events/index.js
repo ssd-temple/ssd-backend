@@ -23,10 +23,13 @@ const POPULATE = [
  * sense, and — matching the reference screenshot's own hint text — every
  * slot's date has to fall inside that range once slots are required at all.
  */
-function assertDatesValid({ startDate, endDate, isSlotRequired, slotDetails }) {
+function assertDatesValid({ dateType, eventDates, startDate, endDate, isSlotRequired, slotDetails }) {
   const start = new Date(startDate);
   const end = new Date(endDate);
   if (end < start) throw "End date cannot be before the start date.";
+  if (dateType === "MULTIPLE" && (!eventDates || eventDates.length === 0)) {
+    throw "Select at least one event date.";
+  }
 
   if (isSlotRequired) {
     if (!slotDetails || slotDetails.length === 0) {
@@ -41,9 +44,22 @@ function assertDatesValid({ startDate, endDate, isSlotRequired, slotDetails }) {
   }
 }
 
+/** Same slot = same name on the same day. */
+const slotKey = (s) => `${s.slotName}|${new Date(s.date).toISOString().slice(0, 10)}`;
+
+/**
+ * bookedSeats belongs to the server: a new slot starts at 0, and an existing
+ * slot keeps the count it already had no matter what the form sent back.
+ */
+function withServerBookedSeats(slotDetails, existingSlots = []) {
+  const booked = new Map(existingSlots.map((s) => [slotKey(s), s.bookedSeats || 0]));
+  return (slotDetails || []).map((s) => ({ ...s, bookedSeats: booked.get(slotKey(s)) ?? 0 }));
+}
+
 async function create(req, res) {
   try {
     assertDatesValid(req.body);
+    req.body.slotDetails = withServerBookedSeats(req.body.slotDetails);
     const doc = await Event.create({ ...req.body, createdBy: req.auth?.userId || null });
     const populated = await doc.populate(POPULATE);
     return responseHandler({ res, response: populated, successMessage: "Created successfully.", statusCode: 201 });
@@ -61,12 +77,17 @@ async function update(req, res) {
     if (!existing) throw "Event not found.";
 
     assertDatesValid({
+      dateType: req.body.dateType ?? existing.dateType,
+      eventDates: req.body.eventDates ?? existing.eventDates,
       startDate: req.body.startDate ?? existing.startDate,
       endDate: req.body.endDate ?? existing.endDate,
       isSlotRequired: req.body.isSlotRequired ?? existing.isSlotRequired,
       slotDetails: req.body.slotDetails ?? existing.slotDetails,
     });
 
+    if (req.body.slotDetails) {
+      req.body.slotDetails = withServerBookedSeats(req.body.slotDetails, existing.slotDetails);
+    }
     Object.assign(existing, req.body, { updatedBy: req.auth?.userId || null });
     await existing.save();
     const populated = await existing.populate(POPULATE);
