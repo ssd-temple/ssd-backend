@@ -22,6 +22,7 @@
  *   GET  /services?search=&category=&subCategory=&favorite= — POS service picker
  *        (favorite=true powers the POS Portal's static "Favorites" tab —
  *        a flat, cross-category pick list, same shape as a search result)
+ *   GET  /events                           — live + upcoming events (POS Portal "Events" tab, display only)
  *   GET  /catalogue                        — category tabs + sub-category folders
  *   GET  /deities                          — active deity roster
  *   GET  /nakshathirams                    — active nakshathiram roster
@@ -68,6 +69,7 @@ const ensureCustomerProfileForUser = require("../../utilities/helpers/ensure-cus
 const Item = require("../../models/items");
 const Service = require("../../models/services");
 const GeneralItem = require("../../models/general-items");
+const Event = require("../../models/events");
 const Deity = require("../../models/deities");
 const Nakshathiram = require("../../models/nakshathirams");
 const Entity = require("../../models/entities");
@@ -551,6 +553,50 @@ async function listPosServices(req, res) {
     const servicesWithAvailability = await decorateServices(services);
 
     return responseHandler({ res, response: { items: servicesWithAvailability, total, page, pageSize } });
+  } catch (error) {
+    return exceptionHandler({ res, error });
+  }
+}
+
+/**
+ * GET /(booking|admin/booking)/events
+ * Events that are on or still to come, for the POS Portal's "Events" tab. An
+ * event is live while it is Active and its last date has not passed - an
+ * event that finished yesterday drops off by itself, and one starting next
+ * month shows as upcoming. Display only: events are not sold through the
+ * cart yet, so this returns what the card needs (dates, description, slot
+ * availability) and nothing price-calculation related.
+ *
+ * "Today" is the temple's own calendar day (Singapore), not the server's,
+ * since event dates are stored as plain calendar dates.
+ */
+async function listPosEvents(req, res) {
+  try {
+    const isAdmin = req.posPortal === "admin";
+    const sgToday = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const todayStart = new Date(`${sgToday}T00:00:00.000Z`);
+
+    const filter = Event.notDeletedFilter({ status: 1, endDate: { $gte: todayStart } });
+    if (!isAdmin) filter.posVisibility = true;
+
+    const events = await Event.find(filter)
+      .populate({ path: "category", select: "name color" })
+      .populate({ path: "deityMapping", select: "name tamilName image color", options: { sort: { displayOrder: 1, name: 1 } } })
+      .select(
+        "name tamilName code description image sliderImage category deityMapping dateType eventDates startDate endDate salePrice isSlotRequired slotDetails isFamilyMembersRequired maxFamilyMembers termsAndConditions"
+      )
+      .sort({ startDate: 1, displayOrder: 1, name: 1 })
+      .lean();
+
+    const items = events.map((e) => ({
+      ...e,
+      // Only slots that can still be attended: active, and not already past.
+      slotDetails: (e.slotDetails || [])
+        .filter((slot) => slot.status === 1 && new Date(slot.date) >= todayStart)
+        .sort((a, b) => new Date(a.date) - new Date(b.date) || String(a.startTime).localeCompare(String(b.startTime))),
+    }));
+
+    return responseHandler({ res, response: { items, total: items.length } });
   } catch (error) {
     return exceptionHandler({ res, error });
   }
@@ -2173,6 +2219,7 @@ function registerCatalogueRoutes(r) {
   r.get("/items",               requirePermission("admin-booking", "view"),       listPosItems);
   r.get("/services",            requirePermission("admin-booking", "view"),       listPosServices);
   r.get("/general-items",       requirePermission("admin-booking", "view"),       listGeneralItems);
+  r.get("/events",              requirePermission("admin-booking", "view"),       listPosEvents);
   r.get("/payment-modes",       requirePaymentModeAccess,                         listPaymentModes);
   r.get("/catalogue",           requirePermission("admin-booking", "view"),       getCatalogue);
   r.get("/deities",             requirePermission("admin-booking", "view"),       listDeities);
