@@ -51,7 +51,13 @@ const eventSchema = new mongoose.Schema({
   slotDetails: { type: [slotDetailSchema], default: [] },
 
   salePrice: { type: Number, required: true, min: 0 },
-  gstClassification: { type: String, required: true }, // APPLICABLE | EXEMPTED | OUT_OF_SCOPE — see utilities/constants/gst-classifications
+  // The General Ledger the sale posts to - its GST Type decides the GST, exactly as for
+  // Items and Services. Required when an event is created or edited; kept optional on the
+  // schema only so events saved before this existed still load (see gstClassification).
+  generalLedger: { type: mongoose.Schema.Types.ObjectId, ref: "GeneralLedger", default: null },
+  // Legacy: events created before the General Ledger field used this APPLICABLE / EXEMPTED /
+  // OUT_OF_SCOPE choice. Only read as a fallback while an event has no General Ledger yet.
+  gstClassification: { type: String, default: "" },
   displayOrder: { type: Number, default: 1 },
 
   isFamilyMembersRequired: { type: Boolean, default: false },
@@ -70,6 +76,7 @@ eventSchema.index({ startDate: 1, endDate: 1 });
 
 // Every ref field indexed — Mongoose doesn't index a `ref` automatically.
 eventSchema.index({ category: 1 });
+eventSchema.index({ generalLedger: 1 });
 eventSchema.index({ subCategory: 1 });
 eventSchema.index({ deityMapping: 1 });
 

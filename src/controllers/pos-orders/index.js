@@ -182,7 +182,7 @@ async function createOrder(req, res) {
       if (refType === "Event") {
         eventParts = await resolveEventLine(line, { portal: "pos" });
         ({ name, code, unitPrice, gstType, deities, devotees } = eventParts);
-        generalLedgerId = null;
+        generalLedgerId = eventParts.generalLedgerId;
       } else if (refType === "Item") {
         const item = await Item.findOne(
           Item.notDeletedFilter({ _id: refId, status: 1, posAvailability: true })

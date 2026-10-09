@@ -11,6 +11,7 @@ const { createSchema, updateSchema } = require("./request-objects");
 const { fields: importExportFields, validateRow, exportRow, exportPopulate, sampleRows } = require("./import-export-fields");
 
 const POPULATE = [
+  { path: "generalLedger", select: "name code gstType" },
   { path: "category", select: "name color" },
   { path: "subCategory", select: "name color" },
   // Admin-assigned display order (ties alphabetical) — see models/deities'

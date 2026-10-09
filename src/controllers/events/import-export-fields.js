@@ -1,7 +1,7 @@
 const Category = require("../../models/categories");
 const SubCategory = require("../../models/sub-categories");
 const Deity = require("../../models/deities");
-const { GST_CLASSIFICATIONS } = require("../../utilities/constants/gst-classifications");
+const GeneralLedger = require("../../models/general-ledgers");
 
 /**
  * Column definitions for Event's Excel import/export. Excludes Slot Details
@@ -22,7 +22,7 @@ const fields = [
   { key: "startDate", header: "Start Date*", type: "date", required: true, helpText: "Event start date (e.g. 2026-01-15)." },
   { key: "endDate", header: "End Date*", type: "date", required: true, helpText: "Event end date — cannot be before the start date." },
   { key: "salePrice", header: "Sale Price*", type: "number", required: true, min: 0, helpText: "Selling price, 0 or greater." },
-  { key: "gstClassification", header: "GST Classification*", type: "enum", required: true, values: GST_CLASSIFICATIONS, helpText: `One of: ${GST_CLASSIFICATIONS.join(", ")}.` },
+  { key: "generalLedger", header: "General Ledger*", type: "ref", required: true, refModel: GeneralLedger, refLabelField: "name", helpText: "Must exactly match one of the active General Ledger records. Its GST Type decides the GST." },
   { key: "displayOrder", header: "Display Order", type: "number", integer: true, min: 0, default: 1, helpText: "Lower numbers appear first. Leave blank for 1." },
   { key: "posVisibility", header: "POS Visibility", type: "boolean", default: true, helpText: "Yes/No — visible at the POS counter. Defaults to Yes." },
   { key: "publicVisibility", header: "Public Visibility", type: "boolean", default: true, helpText: "Yes/No — visible on the customer portal. Defaults to Yes." },
@@ -47,7 +47,7 @@ function exportRow(doc) {
     startDate: doc.startDate ? new Date(doc.startDate).toISOString().slice(0, 10) : "",
     endDate: doc.endDate ? new Date(doc.endDate).toISOString().slice(0, 10) : "",
     salePrice: doc.salePrice,
-    gstClassification: doc.gstClassification,
+    generalLedger: doc.generalLedger?.name ?? "",
     displayOrder: doc.displayOrder,
     posVisibility: doc.posVisibility ? "Yes" : "No",
     publicVisibility: doc.publicVisibility ? "Yes" : "No",
@@ -58,10 +58,12 @@ const exportPopulate = [
   { path: "category", select: "name" },
   { path: "subCategory", select: "name" },
   { path: "deityMapping", select: "name" },
+  { path: "generalLedger", select: "name" },
 ];
 
 function sampleRows(refLookups) {
   const categoryName = refLookups.category?.docs?.[0]?.name ?? "Your Category Name";
+  const glName = refLookups.generalLedger?.docs?.[0]?.name ?? "Your General Ledger Name";
   const today = new Date();
   const start = today.toISOString().slice(0, 10);
   const end = new Date(today.getTime() + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -78,7 +80,7 @@ function sampleRows(refLookups) {
       startDate: start,
       endDate: end,
       salePrice: 100,
-      gstClassification: GST_CLASSIFICATIONS[0],
+      generalLedger: glName,
       displayOrder: 1,
       posVisibility: "Yes",
       publicVisibility: "Yes",
