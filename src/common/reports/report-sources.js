@@ -87,12 +87,30 @@ function categoryLookupStages() {
       },
     },
     {
+      // An Event carries one category/sub category of its own, not a categoryDetails list.
+      $lookup: {
+        from: "events",
+        let: { rid: "$_refId", rtype: "$_refType" },
+        pipeline: [
+          { $match: { $expr: { $and: [{ $eq: ["$_id", "$$rid"] }, { $eq: ["$$rtype", "Event"] }] } } },
+          { $project: { categoryId: "$category", subCategoryId: "$subCategory" } },
+        ],
+        as: "__eventCat",
+      },
+    },
+    {
       $addFields: {
         __categoryId: {
-          $ifNull: [{ $arrayElemAt: ["$__itemCat.categoryId", 0] }, { $arrayElemAt: ["$__serviceCat.categoryId", 0] }],
+          $ifNull: [
+            { $arrayElemAt: ["$__itemCat.categoryId", 0] },
+            { $ifNull: [{ $arrayElemAt: ["$__serviceCat.categoryId", 0] }, { $arrayElemAt: ["$__eventCat.categoryId", 0] }] },
+          ],
         },
         __subCategoryId: {
-          $ifNull: [{ $arrayElemAt: ["$__itemCat.subCategoryId", 0] }, { $arrayElemAt: ["$__serviceCat.subCategoryId", 0] }],
+          $ifNull: [
+            { $arrayElemAt: ["$__itemCat.subCategoryId", 0] },
+            { $ifNull: [{ $arrayElemAt: ["$__serviceCat.subCategoryId", 0] }, { $arrayElemAt: ["$__eventCat.subCategoryId", 0] }] },
+          ],
         },
       },
     },
@@ -104,7 +122,7 @@ function categoryLookupStages() {
         _subCategoryName: { $arrayElemAt: ["$__subCategoryDoc.name", 0] },
       },
     },
-    { $project: { __itemCat: 0, __serviceCat: 0, __categoryId: 0, __subCategoryId: 0, __categoryDoc: 0, __subCategoryDoc: 0 } },
+    { $project: { __itemCat: 0, __serviceCat: 0, __eventCat: 0, __categoryId: 0, __subCategoryId: 0, __categoryDoc: 0, __subCategoryDoc: 0 } },
   ];
 }
 
@@ -474,8 +492,8 @@ const REPORT_SOURCES = [
 
   {
     key: "itemSales",
-    label: "Item/Service Sales Report",
-    description: "One row per item/service line sold — Admin Bookings and POS Bookings combined. Category needs one small lookup, included only when selected.",
+    label: "Item/Service/Event Sales Report",
+    description: "One row per item, service or event line sold — Admin Bookings and POS Bookings combined. Category needs one small lookup, included only when selected.",
     model: Booking,
     basePipeline: [
       ...itemSalesBranch({ sourceLabel: "Admin Booking" }),
@@ -484,9 +502,9 @@ const REPORT_SOURCES = [
     defaultSort: { field: "saleDate", dir: "desc" },
     fields: [
       { key: "bookingNumber", label: "Booking No", type: "string", path: "_bookingNumber" },
-      { key: "itemName", label: "Item/Service Name", type: "string", path: "_name" },
+      { key: "itemName", label: "Item/Service/Event Name", type: "string", path: "_name" },
       { key: "code", label: "Code", type: "string", path: "_code" },
-      { key: "refType", label: "Type", type: "string", path: "_refType", options: ["Item", "Service"] },
+      { key: "refType", label: "Type", type: "string", path: "_refType", options: ["Item", "Service", "Event"] },
       {
         key: "category",
         label: "Category",

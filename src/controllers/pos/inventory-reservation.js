@@ -41,6 +41,8 @@ const Item = require("../../models/items");
 const Service = require("../../models/services");
 const GeneralItem = require("../../models/general-items");
 const InventoryReservation = require("../../models/inventory-reservations");
+const Event = require("../../models/events");
+const { slotKeyOf, slotSeatsLeft } = require("../../common/utils/event-line");
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -137,6 +139,37 @@ async function placeReservation(refType, refId, requestedQty, orderId) {
 }
 
 /**
+ * Holds seats on one Event slot for an order. Slots with no seat limit
+ * (totalSeats 0) need no hold. Throws a plain string when the slot cannot
+ * take the requested seats, so the whole order is refused and rolled back.
+ */
+async function placeEventReservation(line, orderId) {
+  const slotKey = line.eventSlot?.slotKey;
+  if (!slotKey) return null; // event without slots — nothing to hold
+
+  const event = await Event.findOne(Event.notDeletedFilter({ _id: line.refId, status: 1 })).select("name slotDetails");
+  const slot = event?.slotDetails.find((s) => slotKeyOf(s) === slotKey);
+  if (!slot) throw `The selected slot for "${line.name}" is no longer available.`;
+  if (!slot.totalSeats) return null;
+
+  const seats = line.seats || 1;
+  const left = await slotSeatsLeft(event, slot);
+  if (seats > left) {
+    throw `Only ${left} seat(s) left on "${slot.slotName}" for "${event.name}" (need ${seats}).`;
+  }
+
+  return InventoryReservation.create({
+    orderId,
+    refType: "Event",
+    refId: line.refId,
+    slotKey,
+    quantity: seats,
+    status: "active",
+    expiresAt: new Date(Date.now() + RESERVATION_TTL_MS),
+  });
+}
+
+/**
  * Place reservations for ALL inventory-applicable lines in a cart.
  * If any line fails, all previously placed reservations for this order
  * are immediately cancelled (best-effort rollback).
@@ -149,7 +182,10 @@ async function placeReservationsForOrder(lines, orderId) {
   const placed = [];
   try {
     for (const line of lines) {
-      const r = await placeReservation(line.refType, line.refId, line.quantity, orderId);
+      const r =
+        line.refType === "Event"
+          ? await placeEventReservation(line, orderId)
+          : await placeReservation(line.refType, line.refId, line.quantity, orderId);
       placed.push(r);
     }
     return placed;
@@ -188,6 +224,10 @@ async function consumeReservations(orderId, lines, bookedByUserId, bookingNumber
   const InventoryAdjustment = require("../../models/inventory-adjustments");
 
   for (const line of lines) {
+    if (line.refType === "Event") {
+      await countEventSeats(line);
+      continue;
+    }
     const Model = REF_MODELS[line.refType];
     const flag = inventoryFlag(line.refType);
 
@@ -217,6 +257,20 @@ async function consumeReservations(orderId, lines, bookedByUserId, bookingNumber
     { orderId, status: "active" },
     { $set: { status: "consumed", releasedAt: new Date() } }
   );
+}
+
+/**
+ * Turns an Event line's held seats into booked seats on the slot — the Event
+ * counterpart of the stock-out above. Incremented in one atomic update so
+ * two bookings confirming together cannot overwrite each other's count.
+ */
+async function countEventSeats(line) {
+  const slotKey = line.eventSlot?.slotKey;
+  if (!slotKey) return;
+  const event = await Event.findOne({ _id: line.refId }).select("slotDetails");
+  const index = event?.slotDetails.findIndex((s) => slotKeyOf(s) === slotKey) ?? -1;
+  if (index < 0) return;
+  await Event.updateOne({ _id: line.refId }, { $inc: { [`slotDetails.${index}.bookedSeats`]: line.seats || 1 } });
 }
 
 /**

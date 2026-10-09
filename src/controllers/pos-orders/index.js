@@ -47,6 +47,8 @@ const { assertPaynowConfigured, renderQrImage } = require("../payments/paynow/ge
 const Item = require("../../models/items");
 const Service = require("../../models/services");
 const GeneralItem = require("../../models/general-items");
+const Event = require("../../models/events");
+const { resolveEventLine } = require("../../common/utils/event-line");
 const { Customer } = require("../../models/customers");
 const PaymentMode = require("../../models/payment-modes");
 const { PosOrder } = require("../../models/pos-orders");
@@ -172,10 +174,16 @@ async function createOrder(req, res) {
     const rawLines = [];
 
     for (const line of lines) {
-      const { refType, refId, deities, devotees } = line;
+      const { refType, refId } = line;
+      let { deities, devotees } = line;
       let name, code, unitPrice, gstType, generalLedgerId;
+      let eventParts = null;
 
-      if (refType === "Item") {
+      if (refType === "Event") {
+        eventParts = await resolveEventLine(line, { portal: "pos" });
+        ({ name, code, unitPrice, gstType, deities, devotees } = eventParts);
+        generalLedgerId = null;
+      } else if (refType === "Item") {
         const item = await Item.findOne(
           Item.notDeletedFilter({ _id: refId, status: 1, posAvailability: true })
         ).populate("generalLedger", "gstType");
@@ -239,6 +247,8 @@ async function createOrder(req, res) {
         gstRate,
         deities,
         devotees,
+        eventSlot: eventParts?.eventSlot ?? null,
+        seats: eventParts?.seats ?? 1,
       });
     }
 
@@ -258,6 +268,8 @@ async function createOrder(req, res) {
       glAmount: gst.lines[i].glAmount,
       deities: l.deities,
       devotees: l.devotees,
+      eventSlot: l.eventSlot,
+      seats: l.seats,
     }));
     const subtotal = gst.totalGlAmount;
     const totalGst = gst.totalGstAmount;
@@ -295,6 +307,8 @@ async function createOrder(req, res) {
           glAmount: l.glAmount,
           deities: l.deities,
           devotees: l.devotees,
+          eventSlot: l.eventSlot,
+          seats: l.seats,
         })),
         subtotal: +subtotal.toFixed(2),
         gstAmount: +totalGst.toFixed(2),
@@ -856,6 +870,13 @@ async function computeBookingTicketGroups(bookingId) {
       : [],
   ]);
   const offeringsById = new Map([...items, ...services, ...generalItems].map((doc) => [String(doc._id), doc]));
+  // Event lines print per deity (the picked deities carry the print group), so an event
+  // behaves like a deity-mapped offering here.
+  const eventIds = booking.lines.filter((l) => l.refType === "Event").map((l) => l.refId);
+  if (eventIds.length) {
+    const eventDocs = await Event.find({ _id: { $in: eventIds } }).select("tamilName");
+    for (const e of eventDocs) offeringsById.set(String(e._id), { isDeityMappingRequired: true, tamilName: e.tamilName });
+  }
 
   const units = booking.lines.flatMap((line) => resolveLineUnits(line, offeringsById.get(String(line.refId)), line.deities));
   const ticketGroups = buildTicketGroups(units, splitMode);

@@ -11,6 +11,8 @@
  * rather than two copies that could drift.
  */
 function effectiveQuantity(line) {
+  // An Event is priced per booking, never per deity picked (see common/utils/event-line.js).
+  if (line.refType === "Event") return 1;
   return line.deities && line.deities.length > 0 ? line.deities.length : line.quantity;
 }
 

@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const eventSlotSchema = require("../shared/event-slot-schema");
 const { auditablePlugin } = require("../../common/plugins/auditable");
 
 /**
@@ -13,7 +14,7 @@ const { auditablePlugin } = require("../../common/plugins/auditable");
 
 const posBookingLineSchema = new mongoose.Schema(
   {
-    refType: { type: String, enum: ["Item", "Service", "GeneralItem"], required: true },
+    refType: { type: String, enum: ["Item", "Service", "GeneralItem", "Event"], required: true },
     refId: { type: mongoose.Schema.Types.ObjectId, required: true },
     name: { type: String, required: true },
     code: { type: String, required: true },
@@ -41,6 +42,11 @@ const posBookingLineSchema = new mongoose.Schema(
       default: [],
     },
     lineTotal: { type: Number, required: true, min: 0 },
+    // Event lines only: the slot the booking was made for, and how many of
+    // its seats this line takes (see common/utils/event-line.js). Null / 1
+    // for Item, Service and General Item lines.
+    eventSlot: { type: eventSlotSchema, default: null },
+    seats: { type: Number, default: 1, min: 1 },
   },
   { _id: false }
 );

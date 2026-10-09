@@ -22,7 +22,9 @@ const addFamilyMembersSchema = Joi.object({
 });
 
 const cartLineSchema = Joi.object({
-  refType: Joi.string().valid("Item", "Service", "GeneralItem").required(),
+  refType: Joi.string().valid("Item", "Service", "GeneralItem", "Event").required(),
+  // Event lines only: which slot (see common/utils/event-line.js slotKeyOf).
+  slotKey: Joi.string().trim().max(300).allow("", null).default(null),
   refId: Joi.string().hex().length(24).required(),
   quantity: Joi.number().integer().min(1).required(),
   // For services: which deity ids this line is for

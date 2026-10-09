@@ -66,7 +66,7 @@ function splitQuantityEvenly(totalQuantity, count) {
 
 function resolveLineUnits(line, offeringDoc, populatedDeities) {
   if (!offeringDoc) {
-    throw `Cannot resolve a print group for "${line.name}" — its Item/Service record could not be found.`;
+    throw `Cannot resolve a print group for "${line.name}" — its Item/Service/Event record could not be found.`;
   }
 
   if (offeringDoc.isDeityMappingRequired) {
@@ -133,6 +133,15 @@ function toTicketLine(unit) {
     // printed ticket could no longer show which devotee's name belongs
     // under which item/deity.
     devotees: (unit.line.devotees || []).map((d) => ({ name: d.name, nakshatra: d.nakshatra })),
+    // Event lines only — the slot the ticket is for (null for Item/Service lines).
+    eventSlot: unit.line.eventSlot
+      ? {
+          slotName: unit.line.eventSlot.slotName,
+          date: unit.line.eventSlot.date,
+          startTime: unit.line.eventSlot.startTime,
+          endTime: unit.line.eventSlot.endTime,
+        }
+      : null,
   };
 }
 

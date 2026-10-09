@@ -79,6 +79,7 @@ const { Order } = require("../../models/orders");
 const { Booking, BOOKING_STATUSES } = require("../../models/bookings");
 const { Transaction } = require("../../models/transactions");
 const { PosBooking } = require("../../models/pos-bookings");
+const { resolveEventLine } = require("../../common/utils/event-line");
 const PrintSplitSetting = require("../../models/print-split-settings");
 const findActiveEntityById = require("../../utilities/helpers/find-active-entity-by-id");
 const { enrichBookingDevoteesForPrint } = require("../../common/utils/enrich-devotees-for-print");
@@ -802,9 +803,10 @@ async function getCatalogue(req, res) {
   try {
     const { categories, subCategories, categoryIds, subCategoryIds } = await loadPosVisibleHierarchy();
     const visible = posHierarchyClause(categoryIds, subCategoryIds);
-    const [items, services] = await Promise.all([
+    const [items, services, generalItems] = await Promise.all([
       Item.find(Item.notDeletedFilter({ status: 1, posAvailability: true, $and: [visible] })).select("categoryDetails"),
       Service.find(Service.notDeletedFilter({ status: 1, isPosAvailable: true, $and: [visible] })).select("categoryDetails"),
+      GeneralItem.find(GeneralItem.notDeletedFilter({ status: 1, posAvailability: true, $and: [visible] })).select("categoryDetails"),
     ]);
     const subCategoryById = new Map(subCategories.map((s) => [String(s._id), s]));
     const categoryById = new Map(categories.map((c) => [String(c._id), c]));
@@ -902,6 +904,16 @@ async function getCatalogue(req, res) {
         return a.subCategoryName.localeCompare(b.subCategoryName);
       });
 
+    // General Items are filed under categories too (the POS lists them in their
+    // category's tab), so a category that holds ONLY General Items still needs
+    // its tab even though it has no folders or loose items/services to count.
+    const categoriesWithGeneralItems = new Set();
+    for (const gi of generalItems) {
+      for (const cd of gi.categoryDetails || []) {
+        if (categoryById.has(String(cd.category))) categoriesWithGeneralItems.add(String(cd.category));
+      }
+    }
+
     const categoriesOut = categories
       .map((c) => {
         const catId = String(c._id);
@@ -911,7 +923,7 @@ async function getCatalogue(req, res) {
           [...categoryOnlyServiceIds.values()].filter((id) => id === catId).length;
         return { _id: c._id, name: c.name, color: c.color, image: c.image || null, count: folderCount + looseCount };
       })
-      .filter((c) => c.count > 0);
+      .filter((c) => c.count > 0 || categoriesWithGeneralItems.has(String(c._id)));
 
     // Both the fully-uncategorized ids and the category-only ids are fetched
     // and decorated together — the only difference the response needs to
@@ -1038,11 +1050,18 @@ async function bookingSummary(req, res) {
     const rawLines = [];
 
     for (const line of lines) {
-      const { refType, refId, deities, devotees } = line;
+      const { refType, refId } = line;
+      let { deities, devotees } = line;
 
       let name, code, unitPrice, gstType, generalLedgerId;
+      // Event lines resolve through one shared helper — see common/utils/event-line.js.
+      let eventParts = null;
 
-      if (refType === "Item") {
+      if (refType === "Event") {
+        eventParts = await resolveEventLine(line, { portal: isAdmin ? "admin" : "pos" });
+        ({ name, code, unitPrice, gstType, deities, devotees } = eventParts);
+        generalLedgerId = null;
+      } else if (refType === "Item") {
         const item = await Item.findOne(
           Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })
         ).populate("generalLedger", "gstType");
@@ -1089,7 +1108,16 @@ async function bookingSummary(req, res) {
       const gstRate = await resolveGstRate(gstType);
 
       // Check availability (read-only — no reservation written here)
-      const avail = await getAvailability(refType, refId);
+      // An event's "stock" is the seats left on its chosen slot.
+      const avail = eventParts
+        ? {
+            isInventoryApplicable: eventParts.seatsLeft !== Infinity,
+            currentStock: 0,
+            reservedQty: 0,
+            availableQty: eventParts.seatsLeft,
+            threshold: 0,
+          }
+        : await getAvailability(refType, refId);
       const available = avail.isInventoryApplicable ? avail.availableQty : Infinity;
 
       // Deity-mapped lines price (and reserve) per selected deity, not per
@@ -1124,7 +1152,9 @@ async function bookingSummary(req, res) {
             }
           : { isApplicable: false },
         availableForBooking: available,
-        quantityExceedsStock: avail.isInventoryApplicable && qty > avail.availableQty,
+        quantityExceedsStock: eventParts ? eventParts.seatsExceeded : avail.isInventoryApplicable && qty > avail.availableQty,
+        eventSlot: eventParts?.eventSlot ?? null,
+        seats: eventParts?.seats ?? 1,
       });
     }
 
@@ -1148,6 +1178,8 @@ async function bookingSummary(req, res) {
       inventory: l.inventory,
       availableForBooking: l.availableForBooking,
       quantityExceedsStock: l.quantityExceedsStock,
+      eventSlot: l.eventSlot,
+      seats: l.seats,
     }));
     const subtotal = gst.totalGlAmount;
     const totalGst = gst.totalGstAmount;
@@ -1210,6 +1242,11 @@ async function recheckLines(req, res) {
         // modal (isDeityMappingRequired, maxFamilyMembers, etc. aren't
         // derivable from the plain name/code/price already returned here).
         let name, code, unitPrice, offeringMeta;
+        if (refType === "Event") {
+          // A past event booking is tied to one slot and its devotees — it is
+          // booked again from the Events tab, not replayed from history.
+          return { ...base, available: false, reason: "Event bookings cannot be repeated — add the event again from the Events tab." };
+        }
         if (refType === "Item") {
           const item = await Item.findOne(Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })).populate({
             path: "deityMapping",
@@ -1355,10 +1392,16 @@ async function createOrder(req, res) {
     const rawLines = [];
 
     for (const line of lines) {
-      const { refType, refId, deities, devotees } = line;
+      const { refType, refId } = line;
+      let { deities, devotees } = line;
       let name, code, unitPrice, gstType, generalLedgerId;
+      let eventParts = null;
 
-      if (refType === "Item") {
+      if (refType === "Event") {
+        eventParts = await resolveEventLine(line, { portal: req.posPortal === "admin" ? "admin" : "pos" });
+        ({ name, code, unitPrice, gstType, deities, devotees } = eventParts);
+        generalLedgerId = null;
+      } else if (refType === "Item") {
         const item = await Item.findOne(
           Item.notDeletedFilter({ _id: refId, status: 1, [itemVisField]: true })
         ).populate("generalLedger", "gstType");
@@ -1417,6 +1460,8 @@ async function createOrder(req, res) {
         gstRate,
         deities,
         devotees,
+        eventSlot: eventParts?.eventSlot ?? null,
+        seats: eventParts?.seats ?? 1,
       });
     }
 
@@ -1436,6 +1481,8 @@ async function createOrder(req, res) {
       glAmount: gst.lines[i].glAmount,
       deities: l.deities,
       devotees: l.devotees,
+      eventSlot: l.eventSlot,
+      seats: l.seats,
     }));
     const subtotal = gst.totalGlAmount;
     const totalGst = gst.totalGstAmount;
@@ -1470,6 +1517,8 @@ async function createOrder(req, res) {
         glAmount: l.glAmount,
         deities: l.deities,
         devotees: l.devotees,
+        eventSlot: l.eventSlot,
+        seats: l.seats,
       })),
       subtotal: +subtotal.toFixed(2),
       gstAmount: +totalGst.toFixed(2),
@@ -2128,6 +2177,13 @@ async function computeAdminBookingTicketGroups(bookingId) {
       : [],
   ]);
   const offeringsById = new Map([...items, ...services, ...generalItems].map((doc) => [String(doc._id), doc]));
+  // Event lines print per deity (the picked deities carry the print group), so an event
+  // behaves like a deity-mapped offering here.
+  const eventIds = booking.lines.filter((l) => l.refType === "Event").map((l) => l.refId);
+  if (eventIds.length) {
+    const eventDocs = await Event.find({ _id: { $in: eventIds } }).select("tamilName");
+    for (const e of eventDocs) offeringsById.set(String(e._id), { isDeityMappingRequired: true, tamilName: e.tamilName });
+  }
 
   const units = booking.lines.flatMap((line) => resolveLineUnits(line, offeringsById.get(String(line.refId)), line.deities));
   const ticketGroups = buildTicketGroups(units, splitMode);
