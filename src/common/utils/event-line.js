@@ -1,24 +1,24 @@
 /**
- * Event cart lines — the third kind of thing a POS/Admin cart can hold, next
+ * Event cart lines - the third kind of thing a POS/Admin cart can hold, next
  * to Items and Services. Kept in one module so the booking summary, both
- * createOrder implementations, the seat reservations and the ticket printer
- * all apply exactly the same rules.
+ * createOrder implementations, the seat holds and the ticket printer all
+ * apply exactly the same rules.
  *
  * What an Event line is:
  *   - Priced per booking (Event.salePrice, GST-inclusive like every other
- *     master), never per deity — effectiveQuantity() always returns 1 for it.
+ *     master), never per deity - effectiveQuantity() always returns 1 for it.
  *   - Tied to one slot when the event needs slots (isSlotRequired), chosen by
  *     `slotKey`.
- *   - Carries the deities picked from the event's own deity mapping, and —
- *     when the event asks for family members — the named devotees.
+ *   - Carries the deities picked from the event's own deity mapping, and -
+ *     when the event asks for family members - the named devotees.
  *   - Takes SEATS from its slot: one seat per named devotee when the event
- *     asks for family members, otherwise one per booking. Seats are held
- *     like stock (a 30-minute InventoryReservation) and counted into the
- *     slot's bookedSeats when the booking is confirmed.
+ *     asks for family members, otherwise one per booking. The seats are held
+ *     from "add to cart" on and turn into booked seats when the booking is
+ *     confirmed - see common/utils/event-seats.js for how that is done.
  */
 const Event = require("../../models/events");
-const InventoryReservation = require("../../models/inventory-reservations");
-const mongoose = require("mongoose");
+const EventSeatHold = require("../../models/event-seat-holds");
+const { slotKeyOf, todayStart, seatsLeftOf } = require("./event-seats");
 
 /** Event.gstClassification -> the GST Master "type" every other line resolves a rate from. */
 const GST_TYPE_BY_CLASSIFICATION = {
@@ -26,42 +26,6 @@ const GST_TYPE_BY_CLASSIFICATION = {
   EXEMPTED: "Exempt",
   OUT_OF_SCOPE: "Out of Scope",
 };
-
-/** Slots have no _id, so name + day + start time is their identity. */
-function slotKeyOf(slot) {
-  const day = new Date(slot.date).toISOString().slice(0, 10);
-  return `${slot.slotName}|${day}|${slot.startTime}`;
-}
-
-/** Start of today's calendar day in Singapore, as the UTC midnight event dates are stored at. */
-function todayStart() {
-  const sgDay = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  return new Date(`${sgDay}T00:00:00.000Z`);
-}
-
-/** Seats currently held by other active (unexpired) reservations on one slot. */
-async function sumActiveSlotReservations(eventId, slotKey) {
-  const rows = await InventoryReservation.aggregate([
-    {
-      $match: {
-        refType: "Event",
-        refId: typeof eventId === "string" ? mongoose.Types.ObjectId.createFromHexString(eventId) : eventId,
-        slotKey,
-        status: "active",
-        expiresAt: { $gt: new Date() },
-      },
-    },
-    { $group: { _id: null, total: { $sum: "$quantity" } } },
-  ]);
-  return rows[0]?.total ?? 0;
-}
-
-/** Seats still free on a slot (Infinity when the slot has no seat limit). */
-async function slotSeatsLeft(event, slot) {
-  if (!slot || !slot.totalSeats) return Infinity;
-  const held = await sumActiveSlotReservations(event._id, slotKeyOf(slot));
-  return Math.max(0, slot.totalSeats - (slot.bookedSeats || 0) - held);
-}
 
 function seatsFor(event, devotees) {
   return event.isFamilyMembersRequired ? Math.max(1, (devotees || []).length) : 1;
@@ -72,7 +36,7 @@ function seatsFor(event, devotees) {
  * everything the summary/order writers need. Throws a plain string on any
  * rule a cashier has to fix (caught by exceptionHandler, shown as a toast).
  *
- * @param {{ refId, slotKey?, deities?, devotees? }} line
+ * @param {{ refId, slotKey?, holdId?, deities?, devotees? }} line
  * @param {{ portal: "pos" | "admin" }} opts
  */
 async function resolveEventLine(line, { portal }) {
@@ -115,7 +79,21 @@ async function resolveEventLine(line, { portal }) {
   }
 
   const seats = seatsFor(event, devotees);
-  const seatsLeft = await slotSeatsLeft(event, slot);
+
+  // Seats this cart line already holds are not "taken from" itself, so they
+  // are added back to what the slot shows as free.
+  let ownHeld = 0;
+  if (slot && line.holdId) {
+    const own = await EventSeatHold.findOne({
+      _id: line.holdId,
+      status: "active",
+      eventId: event._id,
+      slotKey: line.slotKey,
+      expiresAt: { $gt: new Date() },
+    }).select("seats");
+    ownHeld = own?.seats ?? 0;
+  }
+  const seatsLeft = slot ? seatsLeftOf({ ...slot.toObject(), heldSeats: Math.max(0, (slot.heldSeats || 0) - ownHeld) }) : Infinity;
 
   return {
     event,
@@ -128,6 +106,7 @@ async function resolveEventLine(line, { portal }) {
     seats,
     seatsLeft,
     seatsExceeded: seats > seatsLeft,
+    holdId: line.holdId ?? null,
     eventSlot: slot
       ? {
           slotKey: slotKeyOf(slot),
@@ -143,8 +122,6 @@ async function resolveEventLine(line, { portal }) {
 module.exports = {
   slotKeyOf,
   todayStart,
-  sumActiveSlotReservations,
-  slotSeatsLeft,
   seatsFor,
   resolveEventLine,
   GST_TYPE_BY_CLASSIFICATION,

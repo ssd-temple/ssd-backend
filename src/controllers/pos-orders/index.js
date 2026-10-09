@@ -249,6 +249,7 @@ async function createOrder(req, res) {
         devotees,
         eventSlot: eventParts?.eventSlot ?? null,
         seats: eventParts?.seats ?? 1,
+        holdId: eventParts?.holdId ?? null,
       });
     }
 
@@ -270,6 +271,7 @@ async function createOrder(req, res) {
       devotees: l.devotees,
       eventSlot: l.eventSlot,
       seats: l.seats,
+      holdId: l.holdId,
     }));
     const subtotal = gst.totalGlAmount;
     const totalGst = gst.totalGstAmount;
@@ -325,7 +327,9 @@ async function createOrder(req, res) {
 
     // ── 3. Place inventory reservations ─────────────────────────────────
     try {
-      await placeReservationsForOrder(resolvedLines, order._id);
+      // Who is booking (and from which portal) only matters to Event seat holds.
+      const holdOptions = resolvedLines.some((l) => l.refType === "Event") ? [{ ownerId: req.auth?.userId ?? null, posOnly: true }] : [];
+      await placeReservationsForOrder(resolvedLines, order._id, ...holdOptions);
     } catch (reservationError) {
       await PosOrder.findByIdAndUpdate(order._id, { orderStatus: "cancelled" });
       throw reservationError;

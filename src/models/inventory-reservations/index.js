@@ -28,11 +28,9 @@ const mongoose = require("mongoose");
 const inventoryReservationSchema = new mongoose.Schema(
   {
     orderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", required: true },
-    refType: { type: String, enum: ["Item", "Service", "GeneralItem", "Event"], required: true },
+    refType: { type: String, enum: ["Item", "Service", "GeneralItem"], required: true },
     refId: { type: mongoose.Schema.Types.ObjectId, required: true },
     quantity: { type: Number, required: true, min: 1 },
-    // Event seat holds only: which slot of the event the seats are held on.
-    slotKey: { type: String, default: null },
     // "active" → holds quantity from the pool
     // "consumed" → order confirmed; permanent stock-out via InventoryAdjustment
     // "expired" → 30-min window passed; quantity returned
@@ -50,7 +48,6 @@ const inventoryReservationSchema = new mongoose.Schema(
 
 // Primary query: "how much is currently reserved for this ref?"
 inventoryReservationSchema.index({ refType: 1, refId: 1, status: 1 });
-inventoryReservationSchema.index({ refType: 1, refId: 1, slotKey: 1, status: 1 });
 // Cleanup job: find all active reservations that have expired
 inventoryReservationSchema.index({ status: 1, expiresAt: 1 });
 // Order cancellation: find all reservations for a given order

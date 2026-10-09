@@ -25,6 +25,8 @@ const cartLineSchema = Joi.object({
   refType: Joi.string().valid("Item", "Service", "GeneralItem", "Event").required(),
   // Event lines only: which slot (see common/utils/event-line.js slotKeyOf).
   slotKey: Joi.string().trim().max(300).allow("", null).default(null),
+  // Event lines only: the seat hold the cart took for this line.
+  holdId: Joi.string().hex().length(24).allow("", null).default(null),
   refId: Joi.string().hex().length(24).required(),
   quantity: Joi.number().integer().min(1).required(),
   // For services: which deity ids this line is for
@@ -131,6 +133,42 @@ const createCustomerSchema = Joi.object({
   mobileNumber: Joi.string().trim().allow("", null).default(null),
 });
 
+
+/**
+ * Event seat holds - taken when an event goes into the cart, released when it
+ * leaves it. See common/utils/event-seats.js.
+ */
+const holdSeatsSchema = Joi.object({
+  eventId: Joi.string().hex().length(24).required(),
+  slotKey: Joi.string().trim().max(300).required(),
+  seats: Joi.number().integer().min(1).max(100).required(),
+  // Editing a cart line: the hold being replaced (kept if the new one cannot be taken).
+  replaceHoldId: Joi.string().hex().length(24).allow(null).default(null),
+  // The browser tab taking the hold - lets a refreshed page release what its old cart held.
+  clientId: Joi.string().trim().max(64).allow("", null).default(null),
+});
+
+/** A page that has just loaded has an empty cart: let go of whatever its tab's earlier cart still held. */
+const releaseOrphanHoldsSchema = Joi.object({
+  clientId: Joi.string().trim().min(8).max(64).required(),
+});
+
+const refreshHoldsSchema = Joi.object({
+  clientId: Joi.string().trim().max(64).allow("", null).default(null),
+  holds: Joi.array()
+    .items(
+      Joi.object({
+        holdId: Joi.string().hex().length(24).allow(null).default(null),
+        eventId: Joi.string().hex().length(24).required(),
+        slotKey: Joi.string().trim().max(300).required(),
+        seats: Joi.number().integer().min(1).max(100).required(),
+      })
+    )
+    .min(1)
+    .max(50)
+    .required(),
+});
+
 module.exports = {
   summarySchema,
   createOrderSchema,
@@ -140,4 +178,7 @@ module.exports = {
   addFamilyMembersSchema,
   recheckLinesSchema,
   recordPaymentSchema,
+  holdSeatsSchema,
+  refreshHoldsSchema,
+  releaseOrphanHoldsSchema,
 };

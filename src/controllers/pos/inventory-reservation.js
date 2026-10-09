@@ -41,8 +41,14 @@ const Item = require("../../models/items");
 const Service = require("../../models/services");
 const GeneralItem = require("../../models/general-items");
 const InventoryReservation = require("../../models/inventory-reservations");
-const Event = require("../../models/events");
-const { slotKeyOf, slotSeatsLeft } = require("../../common/utils/event-line");
+const EventSeatHold = require("../../models/event-seat-holds");
+const {
+  ORDER_HOLD_TTL_MS,
+  acquireHold,
+  releaseHold,
+  confirmSeats,
+  bookSeatsDirect,
+} = require("../../common/utils/event-seats");
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -139,34 +145,31 @@ async function placeReservation(refType, refId, requestedQty, orderId) {
 }
 
 /**
- * Holds seats on one Event slot for an order. Slots with no seat limit
- * (totalSeats 0) need no hold. Throws a plain string when the slot cannot
- * take the requested seats, so the whole order is refused and rolled back.
+ * Attaches an Event line's seats to an order. The seats are normally already
+ * held - the POS took the hold when the event went into the cart - so this
+ * claims that hold for the order and pushes its expiry out to the order's
+ * window. If the hold is missing (lapsed, or the cart never took one) the
+ * seats are held now, atomically, and the whole order is refused with a plain
+ * message when the slot cannot take them. A slot with no seat limit holds
+ * nothing.
  */
-async function placeEventReservation(line, orderId) {
+async function placeEventReservation(line, orderId, ownerId = null, posOnly = false) {
   const slotKey = line.eventSlot?.slotKey;
-  if (!slotKey) return null; // event without slots — nothing to hold
-
-  const event = await Event.findOne(Event.notDeletedFilter({ _id: line.refId, status: 1 })).select("name slotDetails");
-  const slot = event?.slotDetails.find((s) => slotKeyOf(s) === slotKey);
-  if (!slot) throw `The selected slot for "${line.name}" is no longer available.`;
-  if (!slot.totalSeats) return null;
+  if (!slotKey) return null; // event without slots - nothing to hold
 
   const seats = line.seats || 1;
-  const left = await slotSeatsLeft(event, slot);
-  if (seats > left) {
-    throw `Only ${left} seat(s) left on "${slot.slotName}" for "${event.name}" (need ${seats}).`;
+  if (line.holdId) {
+    const claimed = await EventSeatHold.findOneAndUpdate(
+      { _id: line.holdId, status: "active", eventId: line.refId, slotKey, seats, expiresAt: { $gt: new Date() } },
+      { $set: { orderId, expiresAt: new Date(Date.now() + ORDER_HOLD_TTL_MS) } },
+      { returnDocument: "after" }
+    );
+    if (claimed) return claimed;
+    // The cart's hold no longer matches this line (seats changed, or it lapsed): let it go and take a fresh one.
+    await releaseHold(line.holdId);
   }
 
-  return InventoryReservation.create({
-    orderId,
-    refType: "Event",
-    refId: line.refId,
-    slotKey,
-    quantity: seats,
-    status: "active",
-    expiresAt: new Date(Date.now() + RESERVATION_TTL_MS),
-  });
+  return acquireHold({ eventId: line.refId, slotKey, seats, ownerId, orderId, ttlMs: ORDER_HOLD_TTL_MS, posOnly });
 }
 
 /**
@@ -178,19 +181,20 @@ async function placeEventReservation(line, orderId) {
  * @param {string|ObjectId} orderId
  * @returns {Array} array of InventoryReservation documents (null entries for non-inventory lines)
  */
-async function placeReservationsForOrder(lines, orderId) {
+async function placeReservationsForOrder(lines, orderId, options = {}) {
   const placed = [];
   try {
     for (const line of lines) {
       const r =
         line.refType === "Event"
-          ? await placeEventReservation(line, orderId)
+          ? await placeEventReservation(line, orderId, options.ownerId, options.posOnly)
           : await placeReservation(line.refType, line.refId, line.quantity, orderId);
       placed.push(r);
     }
     return placed;
   } catch (err) {
     // Roll back any reservations already placed in this loop before re-throwing
+    await releaseEventHoldsForOrder(orderId).catch(() => {});
     if (placed.length > 0) {
       const ids = placed.filter(Boolean).map((r) => r._id);
       await InventoryReservation.updateMany(
@@ -225,7 +229,7 @@ async function consumeReservations(orderId, lines, bookedByUserId, bookingNumber
 
   for (const line of lines) {
     if (line.refType === "Event") {
-      await countEventSeats(line);
+      await countEventSeats(orderId, line, bookingNumber);
       continue;
     }
     const Model = REF_MODELS[line.refType];
@@ -260,17 +264,45 @@ async function consumeReservations(orderId, lines, bookedByUserId, bookingNumber
 }
 
 /**
- * Turns an Event line's held seats into booked seats on the slot — the Event
- * counterpart of the stock-out above. Incremented in one atomic update so
- * two bookings confirming together cannot overwrite each other's count.
+ * Turns an Event line's held seats into booked seats - the Event counterpart
+ * of the stock-out above. The order's hold is claimed (active -> consumed) so
+ * it can only ever be counted once, then held -> booked happens in a single
+ * atomic update. A paid order whose hold had already lapsed is booked
+ * directly: the money is taken, so the booking is honoured.
  */
-async function countEventSeats(line) {
+async function countEventSeats(orderId, line, bookingNumber = null) {
   const slotKey = line.eventSlot?.slotKey;
   if (!slotKey) return;
-  const event = await Event.findOne({ _id: line.refId }).select("slotDetails");
-  const index = event?.slotDetails.findIndex((s) => slotKeyOf(s) === slotKey) ?? -1;
-  if (index < 0) return;
-  await Event.updateOne({ _id: line.refId }, { $inc: { [`slotDetails.${index}.bookedSeats`]: line.seats || 1 } });
+  const seats = line.seats || 1;
+
+  const hold = await EventSeatHold.findOneAndUpdate(
+    { orderId, eventId: line.refId, slotKey, seats, status: "active" },
+    { $set: { status: "consumed", releasedAt: new Date(), bookingNumber } }
+  );
+  if (hold) {
+    await confirmSeats(line.refId, slotKey, seats);
+  } else {
+    console.warn(`>>> [event-seats] order ${orderId}: no active hold for "${line.name}" ${slotKey}; booking ${seats} seat(s) directly`);
+    await bookSeatsDirect(line.refId, slotKey, seats);
+    // Keep the allocation history complete: record the seats that had no hold.
+    await EventSeatHold.create({
+      eventId: line.refId,
+      slotKey,
+      seats,
+      orderId,
+      bookingNumber,
+      forced: true,
+      status: "consumed",
+      releasedAt: new Date(),
+      expiresAt: new Date(),
+    });
+  }
+}
+
+/** Gives back every seat still held for an order (cancelled, failed or abandoned). */
+async function releaseEventHoldsForOrder(orderId) {
+  const holds = await EventSeatHold.find({ orderId, status: "active" }).select("_id");
+  for (const h of holds) await releaseHold(h._id);
 }
 
 /**
@@ -278,6 +310,7 @@ async function countEventSeats(line) {
  * explicit cancellation or error rollback).
  */
 async function cancelReservations(orderId) {
+  await releaseEventHoldsForOrder(orderId);
   await InventoryReservation.updateMany(
     { orderId, status: "active" },
     { $set: { status: "cancelled", releasedAt: new Date() } }
@@ -371,6 +404,7 @@ async function getAvailabilityBatch(refType, refs) {
 }
 
 module.exports = {
+  releaseEventHoldsForOrder,
   placeReservationsForOrder,
   consumeReservations,
   cancelReservations,

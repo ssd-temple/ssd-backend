@@ -13,9 +13,12 @@ const slotDetailSchema = new mongoose.Schema(
     startTime: { type: String, required: true },
     endTime: { type: String, required: true },
     totalSeats: { type: Number, default: 0 },
-    // Seats already sold for this slot. Maintained by the server only - the
-    // admin form shows it read-only and anything it sends is ignored.
+    // Seats of confirmed bookings, and seats temporarily held by carts / pending
+    // orders. Both are maintained ONLY by atomic updates in common/utils/
+    // event-seats.js - the admin form shows them read-only and anything it
+    // sends is ignored. Seats left = totalSeats - bookedSeats - heldSeats.
     bookedSeats: { type: Number, default: 0, min: 0 },
+    heldSeats: { type: Number, default: 0, min: 0 },
     status: { type: Number, enum: [0, 1], default: 1 },
   },
   { _id: false }

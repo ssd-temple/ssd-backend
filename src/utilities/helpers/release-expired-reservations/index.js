@@ -22,6 +22,8 @@
  */
 
 const InventoryReservation = require("../../../models/inventory-reservations");
+const EventSeatHold = require("../../../models/event-seat-holds");
+const { releaseSeats } = require("../../../common/utils/event-seats");
 const { Order } = require("../../../models/orders");
 const { PosOrder } = require("../../../models/pos-orders");
 
@@ -96,6 +98,58 @@ async function releaseExpiredReservations() {
 }
 
 /**
+ * Event seat holds that nobody confirmed in time. Each one is claimed
+ * (active -> expired) with a conditional update before its seats are given
+ * back, so a hold that is being confirmed or released at the same moment is
+ * never counted twice. A pending order left with no live seats and no live
+ * stock reservations is cancelled, like the stock job does.
+ *
+ * @returns {Promise<{ expired: number, ordersCancelled: number }>}
+ */
+async function releaseExpiredEventHolds() {
+  const now = new Date();
+  const lapsed = await EventSeatHold.find({ status: "active", expiresAt: { $lte: now } }).limit(500);
+  if (lapsed.length === 0) return { expired: 0, ordersCancelled: 0 };
+
+  let expired = 0;
+  const orderIds = new Set();
+  for (const hold of lapsed) {
+    const claimed = await EventSeatHold.findOneAndUpdate(
+      { _id: hold._id, status: "active", expiresAt: { $lte: now } },
+      { $set: { status: "expired", releasedAt: now } }
+    );
+    if (!claimed) continue; // confirmed, released or extended in the meantime
+    await releaseSeats(claimed.eventId, claimed.slotKey, claimed.seats);
+    expired += 1;
+    if (claimed.orderId) orderIds.add(String(claimed.orderId));
+  }
+
+  let ordersCancelled = 0;
+  for (const orderId of orderIds) {
+    const [reservations, holds] = await Promise.all([
+      InventoryReservation.countDocuments({ orderId, status: "active", expiresAt: { $gt: now } }),
+      EventSeatHold.countDocuments({ orderId, status: "active" }),
+    ]);
+    if (reservations > 0 || holds > 0) continue;
+    for (const Model of ORDER_MODELS) {
+      const cancelled = await Model.findOneAndUpdate(
+        Model.notDeletedFilter({ _id: orderId, orderStatus: "pending" }),
+        { orderStatus: "cancelled" }
+      );
+      if (cancelled) {
+        ordersCancelled += 1;
+        break;
+      }
+    }
+  }
+
+  if (expired > 0) {
+    console.log(`>>> [event-holds-cleanup] Released ${expired} seat hold(s), cancelled ${ordersCancelled} order(s) at ${now.toISOString()}`);
+  }
+  return { expired, ordersCancelled };
+}
+
+/**
  * Start the periodic cleanup job.
  *
  * @param {number} [intervalMs=300_000] How often to run (default: 5 minutes)
@@ -108,6 +162,9 @@ function startReservationCleanupJob(intervalMs = 5 * 60 * 1000) {
   releaseExpiredReservations().catch((err) => {
     console.error(">>> [reservation-cleanup] Initial run failed:", err);
   });
+  releaseExpiredEventHolds().catch((err) => {
+    console.error(">>> [event-holds-cleanup] Initial run failed:", err);
+  });
 
   const handle = setInterval(() => {
     releaseExpiredReservations().catch((err) => {
@@ -115,8 +172,16 @@ function startReservationCleanupJob(intervalMs = 5 * 60 * 1000) {
     });
   }, intervalMs);
 
+  // Seat holds are short (a cart's lasts 20 minutes), so they are swept every minute.
+  const holdsHandle = setInterval(() => {
+    releaseExpiredEventHolds().catch((err) => {
+      console.error(">>> [event-holds-cleanup] Interval run failed:", err);
+    });
+  }, 60 * 1000);
+
   // Don't keep Node alive just for the cleanup job
   if (handle.unref) handle.unref();
+  if (holdsHandle.unref) holdsHandle.unref();
 
   console.log(
     `>>> [reservation-cleanup] Job scheduled every ${intervalMs / 1000}s`
@@ -125,4 +190,4 @@ function startReservationCleanupJob(intervalMs = 5 * 60 * 1000) {
   return handle;
 }
 
-module.exports = { releaseExpiredReservations, startReservationCleanupJob };
+module.exports = { releaseExpiredReservations, releaseExpiredEventHolds, startReservationCleanupJob };

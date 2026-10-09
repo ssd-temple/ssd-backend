@@ -44,22 +44,98 @@ function assertDatesValid({ dateType, eventDates, startDate, endDate, isSlotRequ
   }
 }
 
-/** Same slot = same name on the same day. */
-const slotKey = (s) => `${s.slotName}|${new Date(s.date).toISOString().slice(0, 10)}`;
+const { slotKeyOf, keyExpr, bookedExpr, heldExpr, toObjectId } = require("../../common/utils/event-seats");
+const { buildUserSnapshot } = require("../../common/utils/entity-snapshot");
+
+const dayOf = (slot) => new Date(slot.date).toISOString().slice(0, 10);
+
+/** An event "has bookings" once any of its slots has a confirmed booking. */
+const eventHasBookings = (event) => (event.slotDetails || []).some((s) => (s.bookedSeats || 0) > 0);
+const eventHasHolds = (event) => (event.slotDetails || []).some((s) => (s.heldSeats || 0) > 0);
 
 /**
- * bookedSeats belongs to the server: a new slot starts at 0, and an existing
- * slot keeps the count it already had no matter what the form sent back.
+ * Seat counters belong to the server (see common/utils/event-seats.js): a new
+ * slot starts at 0 and anything the form sends for them is ignored.
  */
-function withServerBookedSeats(slotDetails, existingSlots = []) {
-  const booked = new Map(existingSlots.map((s) => [slotKey(s), s.bookedSeats || 0]));
-  return (slotDetails || []).map((s) => ({ ...s, bookedSeats: booked.get(slotKey(s)) ?? 0 }));
+function withZeroCounters(slotDetails) {
+  return (slotDetails || []).map((s) => ({ ...s, bookedSeats: 0, heldSeats: 0 }));
 }
+
+/**
+ * Slot editing rules, checked against the slots as they are right now.
+ *
+ *  - A slot with a confirmed booking is frozen: its name, date and times
+ *    cannot change, it cannot be removed or made inactive, and its seat limit
+ *    can only go UP (never below what is already sold).
+ *  - A slot whose seats are being held by an open cart keeps its identity
+ *    until those holds clear (a few minutes at most), so a hold can never be
+ *    orphaned.
+ *  - Any slot's seat limit must stay at or above booked + held seats.
+ *
+ * 0 total seats means "no seat limit", which counts as the highest limit.
+ */
+function assertSlotChangesAllowed(existingSlots, incomingSlots) {
+  const incomingByKey = new Map(incomingSlots.map((s) => [slotKeyOf(s), s]));
+
+  for (const slot of existingSlots) {
+    const booked = slot.bookedSeats || 0;
+    const held = slot.heldSeats || 0;
+    const incoming = incomingByKey.get(slotKeyOf(slot));
+    const label = `"${slot.slotName}" on ${dayOf(slot)} at ${slot.startTime}`;
+
+    if (booked > 0) {
+      if (!incoming || incoming.endTime !== slot.endTime) {
+        throw `Slot ${label} already has ${booked} booked seat(s) - its name, date and time cannot be changed and it cannot be removed. You can only increase its seats.`;
+      }
+      if (incoming.status !== 1) throw `Slot ${label} has bookings, so it cannot be made inactive.`;
+      const wasLimited = slot.totalSeats > 0;
+      if (wasLimited && incoming.totalSeats !== 0 && incoming.totalSeats < slot.totalSeats) {
+        throw `Slot ${label} has bookings, so its seats can only be increased (currently ${slot.totalSeats}).`;
+      }
+      if (wasLimited && incoming.totalSeats === 0) continue; // opening it up to no limit is an increase
+      if (!wasLimited && incoming.totalSeats !== 0) {
+        throw `Slot ${label} has bookings and no seat limit, so a limit cannot be added.`;
+      }
+    } else if (held > 0 && (!incoming || incoming.endTime !== slot.endTime || incoming.status !== 1)) {
+      throw `Slot ${label} has ${held} seat(s) held by open carts. Try again in a few minutes.`;
+    }
+  }
+
+  for (const incoming of incomingSlots) {
+    const existing = existingSlots.find((s) => slotKeyOf(s) === slotKeyOf(incoming));
+    if (!existing || incoming.totalSeats === 0) continue;
+    const used = (existing.bookedSeats || 0) + (existing.heldSeats || 0);
+    if (incoming.totalSeats < used) {
+      throw `Slot "${incoming.slotName}" has ${used} seat(s) booked or held, so its seats cannot be set below that.`;
+    }
+  }
+}
+
+/** A slot field read from the CURRENT document inside a MongoDB expression (0 when the slot is gone). */
+function slotFieldExpr(key, field) {
+  return {
+    $ifNull: [
+      {
+        $first: {
+          $map: {
+            input: { $filter: { input: "$slotDetails", as: "f", cond: { $eq: [keyExpr("f"), key] } } },
+            as: "m",
+            in: `$$m.${field}`,
+          },
+        },
+      },
+      0,
+    ],
+  };
+}
+
+const totalBookedExpr = { $sum: { $map: { input: "$slotDetails", as: "s", in: bookedExpr("s") } } };
+const totalHeldExpr = { $sum: { $map: { input: "$slotDetails", as: "s", in: heldExpr("s") } } };
 
 async function create(req, res) {
   try {
     assertDatesValid(req.body);
-    req.body.slotDetails = withServerBookedSeats(req.body.slotDetails);
+    req.body.slotDetails = withZeroCounters(req.body.slotDetails);
     const doc = await Event.create({ ...req.body, createdBy: req.auth?.userId || null });
     const populated = await doc.populate(POPULATE);
     return responseHandler({ res, response: populated, successMessage: "Created successfully.", statusCode: 201 });
@@ -71,40 +147,150 @@ async function create(req, res) {
   }
 }
 
+/**
+ * Edits an event WITHOUT ever overwriting the live seat counters.
+ *
+ * The admin form sends back the whole slot list, but bookedSeats/heldSeats
+ * change on their own whenever a cart holds or a booking confirms. Saving the
+ * document the usual way would write the counters as they were when the form
+ * was opened and silently erase seats sold in between. Instead the update is
+ * ONE conditional pipeline update:
+ *   - the new slot list is merged with the counters of the document AS IT IS
+ *     AT WRITE TIME, so they are never overwritten, and
+ *   - the update's filter re-checks the rules above against that same moment
+ *     (a slot being changed still has nothing held, nothing booked changed
+ *     under us, seat limits still cover booked + held).
+ * If a booking lands between reading and writing the filter simply does not
+ * match and the whole thing is re-read and re-checked (up to 3 times).
+ */
 async function update(req, res) {
   try {
-    const existing = await Event.findOne(Event.notDeletedFilter({ _id: req.params.id }));
-    if (!existing) throw "Event not found.";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const existing = await Event.findOne(Event.notDeletedFilter({ _id: req.params.id }));
+      if (!existing) throw "Event not found.";
 
-    assertDatesValid({
-      dateType: req.body.dateType ?? existing.dateType,
-      eventDates: req.body.eventDates ?? existing.eventDates,
-      startDate: req.body.startDate ?? existing.startDate,
-      endDate: req.body.endDate ?? existing.endDate,
-      isSlotRequired: req.body.isSlotRequired ?? existing.isSlotRequired,
-      slotDetails: req.body.slotDetails ?? existing.slotDetails,
-    });
+      const existingSlots = existing.slotDetails.map((s) => s.toObject());
+      const bookedAlready = eventHasBookings(existing);
 
-    if (req.body.slotDetails) {
-      req.body.slotDetails = withServerBookedSeats(req.body.slotDetails, existing.slotDetails);
+      assertDatesValid({
+        dateType: req.body.dateType ?? existing.dateType,
+        eventDates: req.body.eventDates ?? existing.eventDates,
+        startDate: req.body.startDate ?? existing.startDate,
+        endDate: req.body.endDate ?? existing.endDate,
+        isSlotRequired: req.body.isSlotRequired ?? existing.isSlotRequired,
+        slotDetails: req.body.slotDetails ?? existing.slotDetails,
+      });
+
+      if (req.body.status === 0 && bookedAlready) {
+        throw "This event has bookings, so it cannot be made inactive.";
+      }
+      if (req.body.isSlotRequired === false && bookedAlready) {
+        throw "This event has bookings on its slots, so slots cannot be switched off.";
+      }
+
+      const incomingSlots = req.body.slotDetails;
+      if (incomingSlots) assertSlotChangesAllowed(existingSlots, incomingSlots);
+
+      // Validate the whole proposed document the normal Mongoose way...
+      const { slotDetails: _ignored, ...scalarBody } = req.body;
+      existing.set(scalarBody);
+      if (incomingSlots) existing.set("slotDetails", withZeroCounters(incomingSlots));
+      await existing.validate();
+      const proposed = existing.toObject({ depopulate: true });
+
+      // ...then write it as one atomic update.
+      const setDoc = {};
+      for (const key of Object.keys(scalarBody)) setDoc[key] = { $literal: proposed[key] };
+      setDoc.updatedBy = { $literal: req.auth?.userId ? toObjectId(String(req.auth.userId)) : null };
+      if (req.auth?.userId) setDoc.updatedByInfo = { $literal: await buildUserSnapshot(req.auth.userId) };
+
+      const guards = [];
+      if (req.body.status === 0) guards.push({ $eq: [totalBookedExpr, 0] });
+
+      if (incomingSlots) {
+        const incomingKeys = new Set(proposed.slotDetails.map((s) => slotKeyOf(s)));
+        for (const slot of existingSlots) {
+          const key = slotKeyOf(slot);
+          // No booking may have landed since we looked...
+          guards.push({ $eq: [slotFieldExpr(key, "bookedSeats"), slot.bookedSeats || 0] });
+          // ...and a slot that is being changed or removed must still have nothing held on it.
+          const keeps = incomingKeys.has(key);
+          if (!keeps) guards.push({ $eq: [slotFieldExpr(key, "heldSeats"), 0] });
+        }
+        for (const incoming of proposed.slotDetails) {
+          if (incoming.totalSeats > 0) {
+            const key = slotKeyOf(incoming);
+            guards.push({ $lte: [{ $add: [slotFieldExpr(key, "bookedSeats"), slotFieldExpr(key, "heldSeats")] }, incoming.totalSeats] });
+          }
+        }
+
+        setDoc.slotDetails = {
+          $map: {
+            input: { $literal: proposed.slotDetails },
+            as: "n",
+            in: {
+              $let: {
+                vars: { old: { $first: { $filter: { input: "$slotDetails", as: "o", cond: { $eq: [keyExpr("o"), keyExpr("n")] } } } } },
+                in: { $mergeObjects: ["$$n", { bookedSeats: { $ifNull: ["$$old.bookedSeats", 0] }, heldSeats: { $ifNull: ["$$old.heldSeats", 0] } }] },
+              },
+            },
+          },
+        };
+      }
+
+      const filter = { _id: existing._id, isDeleted: false };
+      if (guards.length) filter.$expr = { $and: guards };
+      const result = await Event.collection.updateOne(filter, [{ $set: setDoc }]);
+      if (result.matchedCount === 0) continue; // changed under us - re-read and re-check
+
+      const fresh = await Event.findById(existing._id).populate(POPULATE);
+      return responseHandler({ res, response: fresh, successMessage: "Updated successfully." });
     }
-    Object.assign(existing, req.body, { updatedBy: req.auth?.userId || null });
-    await existing.save();
-    const populated = await existing.populate(POPULATE);
-    return responseHandler({ res, response: populated, successMessage: "Updated successfully." });
+    throw "This event was just booked or changed by someone else. Please reopen it and try again.";
   } catch (error) {
     if (error?.code === 11000) {
       return exceptionHandler({ res, error: "An event with this code already exists.", statusCode: 409 });
     }
-    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 404 : undefined });
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 409 : undefined });
   }
 }
+
+/**
+ * An event with bookings is part of the sales record and cannot be deleted
+ * (nor one that carts are holding seats on right now). The check and the
+ * delete are one conditional update, so a booking landing at the same moment
+ * cannot slip past it.
+ */
+async function remove(req, res) {
+  try {
+    const existing = await Event.findOne(Event.notDeletedFilter({ _id: req.params.id }));
+    if (!existing) throw "Event not found.";
+    if (eventHasBookings(existing)) throw "This event has bookings, so it cannot be deleted.";
+
+    const result = await Event.collection.updateOne(
+      { _id: existing._id, isDeleted: false, $expr: { $and: [{ $eq: [totalBookedExpr, 0] }, { $eq: [totalHeldExpr, 0] }] } },
+      [{ $set: { isDeleted: true, status: 0, updatedBy: { $literal: req.auth?.userId ? toObjectId(String(req.auth.userId)) : null } } }]
+    );
+    if (result.matchedCount === 0) {
+      throw eventHasHolds(existing) || (await Event.findById(existing._id).then(eventHasHolds))
+        ? "Seats on this event are being held by open carts right now. Try again in a few minutes."
+        : "This event has bookings, so it cannot be deleted.";
+    }
+    return responseHandler({ res, successMessage: "Deleted successfully." });
+  } catch (error) {
+    return exceptionHandler({ res, error, statusCode: typeof error === "string" ? 409 : undefined });
+  }
+}
+
+/** The list carries a ready-made `hasBookings` flag so the screen can lock what must not be touched. */
+const decorateEvents = async (docs) =>
+  docs.map((doc) => ({ ...doc.toObject(), hasBookings: eventHasBookings(doc), hasHeldSeats: eventHasHolds(doc) }));
 
 // Mounted at /masters — see routes/index.js (authGuard/adminOnly now applied
 // once for the whole /masters group there, not per master).
 const router = express.Router();
 
-const crud = makeCrudController(Event, { searchFields: ["name", "code", "tamilName"], populate: POPULATE });
+const crud = makeCrudController(Event, { searchFields: ["name", "code", "tamilName"], populate: POPULATE, decorateItems: decorateEvents });
 
 router.get("/events", requirePermission("events", "view"), crud.list);
 router.post(
@@ -123,7 +309,7 @@ router.put(
   validateBody(updateSchema),
   update
 );
-router.delete("/events/:id", requirePermission("events", "fullAccess"), crud.remove);
+router.delete("/events/:id", requirePermission("events", "fullAccess"), remove);
 
 // Excel import/export — see common/factories/import-export-controller.js.
 const importExport = makeImportExportController(Event, {

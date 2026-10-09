@@ -80,6 +80,7 @@ const { Booking, BOOKING_STATUSES } = require("../../models/bookings");
 const { Transaction } = require("../../models/transactions");
 const { PosBooking } = require("../../models/pos-bookings");
 const { resolveEventLine } = require("../../common/utils/event-line");
+const { holdSeats, refreshHolds, releaseHoldRoute, releaseOrphanHolds } = require("./event-holds");
 const PrintSplitSetting = require("../../models/print-split-settings");
 const findActiveEntityById = require("../../utilities/helpers/find-active-entity-by-id");
 const { enrichBookingDevoteesForPrint } = require("../../common/utils/enrich-devotees-for-print");
@@ -102,6 +103,9 @@ const {
   addFamilyMembersSchema,
   recheckLinesSchema,
   recordPaymentSchema,
+  holdSeatsSchema,
+  refreshHoldsSchema,
+  releaseOrphanHoldsSchema,
 } = require("./request-objects");
 
 const mongoose = require("mongoose");
@@ -1155,6 +1159,7 @@ async function bookingSummary(req, res) {
         quantityExceedsStock: eventParts ? eventParts.seatsExceeded : avail.isInventoryApplicable && qty > avail.availableQty,
         eventSlot: eventParts?.eventSlot ?? null,
         seats: eventParts?.seats ?? 1,
+        holdId: eventParts?.holdId ?? null,
       });
     }
 
@@ -1462,6 +1467,7 @@ async function createOrder(req, res) {
         devotees,
         eventSlot: eventParts?.eventSlot ?? null,
         seats: eventParts?.seats ?? 1,
+        holdId: eventParts?.holdId ?? null,
       });
     }
 
@@ -1483,6 +1489,7 @@ async function createOrder(req, res) {
       devotees: l.devotees,
       eventSlot: l.eventSlot,
       seats: l.seats,
+      holdId: l.holdId,
     }));
     const subtotal = gst.totalGlAmount;
     const totalGst = gst.totalGstAmount;
@@ -1539,7 +1546,9 @@ async function createOrder(req, res) {
     // ── 3. Place inventory reservations ─────────────────────────────────────
     // If this throws, we cancel the order too and re-throw to the client.
     try {
-      await placeReservationsForOrder(resolvedLines, order._id);
+      // Who is booking (and from which portal) only matters to Event seat holds.
+      const holdOptions = resolvedLines.some((l) => l.refType === "Event") ? [{ ownerId: req.auth?.userId ?? null, posOnly: req.posPortal !== "admin" }] : [];
+      await placeReservationsForOrder(resolvedLines, order._id, ...holdOptions);
     } catch (reservationError) {
       // Roll back the order so the order number isn't a ghost
       await Order.findByIdAndUpdate(order._id, { orderStatus: "cancelled" });
@@ -2276,6 +2285,11 @@ function registerCatalogueRoutes(r) {
   r.get("/services",            requirePermission("admin-booking", "view"),       listPosServices);
   r.get("/general-items",       requirePermission("admin-booking", "view"),       listGeneralItems);
   r.get("/events",              requirePermission("admin-booking", "view"),       listPosEvents);
+  // Seat holds - taken when an event goes into the cart, given back when it leaves (see ./event-holds).
+  r.post("/events/holds",         requirePermission("admin-booking", "view"), validateBody(holdSeatsSchema),    holdSeats);
+  r.post("/events/holds/refresh", requirePermission("admin-booking", "view"), validateBody(refreshHoldsSchema), refreshHolds);
+  r.post("/events/holds/release-orphans", requirePermission("admin-booking", "view"), validateBody(releaseOrphanHoldsSchema), releaseOrphanHolds);
+  r.delete("/events/holds/:id",   requirePermission("admin-booking", "view"),                                   releaseHoldRoute);
   r.get("/payment-modes",       requirePaymentModeAccess,                         listPaymentModes);
   r.get("/catalogue",           requirePermission("admin-booking", "view"),       getCatalogue);
   r.get("/deities",             requirePermission("admin-booking", "view"),       listDeities);
