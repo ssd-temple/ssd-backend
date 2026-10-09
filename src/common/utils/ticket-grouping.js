@@ -166,40 +166,82 @@ function groupUnitsByKey(units, keyFn, headerFn) {
 }
 
 /**
+ * Service-wise printing: a Service (or Event) booking line is NEVER merged
+ * with another line, whatever the Print Split Setting says. Two services for
+ * the same deity (Fruit Archana + Prasadam for Murugan) used to land on one
+ * ticket because they share the deity's Print Group; now each prints on its
+ * own ticket. Items and General Items keep following the setting.
+ *
+ * One ticket per (line, deity) unit: a service line that fans out over
+ * several deities still prints one ticket per deity, because each deity has
+ * its own Print Group (its own sanctum/printer) — merging those would send
+ * one deity's archana to another's printer. A service with no deity is one
+ * ticket, as before.
+ */
+const SERVICE_WISE_REF_TYPES = new Set(["Service", "Event"]);
+
+function isServiceWise(unit) {
+  return SERVICE_WISE_REF_TYPES.has(unit.line?.refType);
+}
+
+/**
  * @param {Array} units  flattened output of resolveLineUnits() across every
  *   line in the booking
  * @param {"DEITY_WISE"|"PRINT_GROUP_WISE"} splitMode
  * @returns {Array<{splitType, deityId, deityName, printGroupId, printGroupName, lines, devotees}>}
  */
 function buildTicketGroups(units, splitMode) {
-  if (splitMode === "DEITY_WISE") {
-    // Deity-based units: one ticket per deity, merging across lines that
-    // reference the same deity. Non-deity units are NEVER folded into a
-    // deity's ticket — they keep grouping among themselves by their own
-    // Print Group, same as PRINT_GROUP_WISE would.
-    return groupUnitsByKey(
-      units,
-      (unit) => (unit.isDeityBased ? `deity:${unit.deityId}` : `group:${unit.printGroupId}`),
-      (unit) => ({
-        splitType: unit.isDeityBased ? "DEITY" : "GROUP",
-        deityId: unit.isDeityBased ? unit.deityId : null,
-        deityName: unit.isDeityBased ? unit.deityName : null,
-        printGroupId: unit.isDeityBased ? null : unit.printGroupId,
-        printGroupName: unit.isDeityBased ? null : unit.printGroupName,
-      })
-    );
-  }
+  const deityWise = splitMode === "DEITY_WISE";
 
-  // PRINT_GROUP_WISE (default) — every unit groups by its resolved Print
-  // Group, whether that group came from a deity or directly from the
-  // Item/Service.
-  return groupUnitsByKey(units, (unit) => `group:${unit.printGroupId}`, (unit) => ({
-    splitType: "GROUP",
-    deityId: null,
-    deityName: null,
+  // Non-service units follow the setting exactly as before.
+  const settingKey = (unit) =>
+    deityWise && unit.isDeityBased ? `deity:${unit.deityId}` : `group:${unit.printGroupId}`;
+  const settingHeader = (unit) =>
+    deityWise
+      ? {
+          // Deity-based units: one ticket per deity, merging across lines that
+          // reference the same deity. Non-deity units are NEVER folded into a
+          // deity's ticket — they keep grouping among themselves by their own
+          // Print Group.
+          splitType: unit.isDeityBased ? "DEITY" : "GROUP",
+          deityId: unit.isDeityBased ? unit.deityId : null,
+          deityName: unit.isDeityBased ? unit.deityName : null,
+          printGroupId: unit.isDeityBased ? null : unit.printGroupId,
+          printGroupName: unit.isDeityBased ? null : unit.printGroupName,
+        }
+      : {
+          // PRINT_GROUP_WISE (default) — every unit groups by its resolved Print
+          // Group, whether that group came from a deity or directly from the
+          // Item/Service.
+          splitType: "GROUP",
+          deityId: null,
+          deityName: null,
+          printGroupId: unit.printGroupId,
+          printGroupName: unit.printGroupName,
+        };
+
+  // Service units: the line's own identity (plus its deity) is the key. The
+  // header carries BOTH the deity and the print group, so the deity stays on
+  // the receipt and the ticket still routes to the right Print Group; only
+  // splitType follows the setting, so whatever reads it keeps working.
+  const lineNumbers = new Map();
+  const serviceKey = (unit) => {
+    if (!lineNumbers.has(unit.line)) lineNumbers.set(unit.line, lineNumbers.size);
+    return `service:${lineNumbers.get(unit.line)}:${unit.deityId ?? "-"}`;
+  };
+  const serviceHeader = (unit) => ({
+    splitType: deityWise && unit.isDeityBased ? "DEITY" : "GROUP",
+    deityId: unit.isDeityBased ? unit.deityId : null,
+    deityName: unit.isDeityBased ? unit.deityName : null,
     printGroupId: unit.printGroupId,
     printGroupName: unit.printGroupName,
-  }));
+  });
+
+  return groupUnitsByKey(
+    units,
+    (unit) => (isServiceWise(unit) ? serviceKey(unit) : settingKey(unit)),
+    (unit) => (isServiceWise(unit) ? serviceHeader(unit) : settingHeader(unit))
+  );
 }
 
 module.exports = { resolveLineUnits, buildTicketGroups };
