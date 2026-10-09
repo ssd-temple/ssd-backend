@@ -23,7 +23,7 @@ const fields = [
   { key: "tamilName", header: "Tamil Name", type: "string", required: false, helpText: "Optional Tamil name." },
   { key: "description", header: "Description", type: "string", required: false, helpText: "Optional description." },
   { key: "generalLedger", header: "General Ledger*", type: "ref", required: true, refModel: GeneralLedger, refLabelField: "name", helpText: "Must exactly match one of the active General Ledger records." },
-  { key: "salePrice", header: "Sale Price*", type: "number", required: true, min: 0, helpText: "Selling price, 0 or greater." },
+  { key: "salePrice", header: "Sale Price*", type: "number", required: true, min: 0.01, helpText: "Selling price, greater than 0 (at least 0.01)." },
   { key: "category", header: "Category*", type: "ref", required: true, refModel: Category, refLabelField: "name", helpText: "Must exactly match one of the active Categories. Becomes this item's first Category/Sub Category pairing — add more from the Edit form if needed." },
   { key: "subCategory", header: "Sub Category", type: "ref", required: false, refModel: SubCategory, refLabelField: "name", helpText: "Optional — must exactly match one of the active Sub Categories." },
   { key: "isDeityMappingRequired", header: "Deity Mapping Required", type: "boolean", default: false, helpText: "Yes/No. When Yes, Deity Mapping is required and Printing Group is taken from the deity instead." },

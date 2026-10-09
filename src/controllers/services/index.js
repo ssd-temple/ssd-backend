@@ -28,7 +28,7 @@ const POPULATE = [
 // once for the whole /masters group there, not per master).
 const router = express.Router();
 
-const crud = makeCrudController(Service, { searchFields: ["name", "code", "tamilName"], populate: POPULATE });
+const crud = makeCrudController(Service, { searchFields: ["name", "code", "tamilName"], populate: POPULATE, uniqueNames: "service" });
 
 router.get("/services", requirePermission("services", "view"), crud.list);
 router.post(

@@ -36,7 +36,7 @@ const createSchema = Joi.object({
   isSlotRequired: Joi.boolean().default(false),
   slotDetails: Joi.array().items(slotDetailEntry).default([]),
 
-  salePrice: Joi.number().min(0).required(),
+  salePrice: Joi.number().min(0.01).required(), // must be greater than 0
   generalLedger: objectId.required(),
   gstClassification: Joi.string().valid(...GST_CLASSIFICATIONS).allow("").default(""), // legacy - see models/events
   displayOrder: Joi.number().integer().min(0).default(1),
@@ -71,7 +71,7 @@ const updateSchema = Joi.object({
   isSlotRequired: Joi.boolean(),
   slotDetails: Joi.array().items(slotDetailEntry),
 
-  salePrice: Joi.number().min(0),
+  salePrice: Joi.number().min(0.01), // must be greater than 0
   generalLedger: objectId,
   gstClassification: Joi.string().valid(...GST_CLASSIFICATIONS).allow(""),
   displayOrder: Joi.number().integer().min(0),

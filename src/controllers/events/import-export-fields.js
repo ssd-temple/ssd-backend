@@ -21,7 +21,7 @@ const fields = [
   { key: "deityMapping", header: "Deity Mapping", type: "ref", multi: true, required: false, refModel: Deity, refLabelField: "name", helpText: "Optional. One or more active Deity names, separated by commas." },
   { key: "startDate", header: "Start Date*", type: "date", required: true, helpText: "Event start date (e.g. 2026-01-15)." },
   { key: "endDate", header: "End Date*", type: "date", required: true, helpText: "Event end date — cannot be before the start date." },
-  { key: "salePrice", header: "Sale Price*", type: "number", required: true, min: 0, helpText: "Selling price, 0 or greater." },
+  { key: "salePrice", header: "Sale Price*", type: "number", required: true, min: 0.01, helpText: "Selling price, greater than 0 (at least 0.01)." },
   { key: "generalLedger", header: "General Ledger*", type: "ref", required: true, refModel: GeneralLedger, refLabelField: "name", helpText: "Must exactly match one of the active General Ledger records. Its GST Type decides the GST." },
   { key: "displayOrder", header: "Display Order", type: "number", integer: true, min: 0, default: 1, helpText: "Lower numbers appear first. Leave blank for 1." },
   { key: "posVisibility", header: "POS Visibility", type: "boolean", default: true, helpText: "Yes/No — visible at the POS counter. Defaults to Yes." },

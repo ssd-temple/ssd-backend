@@ -548,7 +548,7 @@ async function listPosServices(req, res) {
         // POS cart's Deities multi-select shows them in the configured
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
-        .select("name tamilName code salePrice categoryDetails isInventoryRequired currentStock thresholdCount isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers sessionRequired image color favorite")
+        .select("name tamilName code salePrice categoryDetails isInventoryRequired currentStock thresholdCount isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color favorite")
         .sort({ name: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize),
@@ -712,7 +712,6 @@ async function decorateServices(services) {
     deityMapping: svc.deityMapping,
     isFamilyMembersRequired: svc.isFamilyMembersRequired,
     maxFamilyMembers: svc.maxFamilyMembers,
-    sessionRequired: svc.sessionRequired,
     favorite: Boolean(svc.favorite),
     inventory: availByRefId.get(String(svc._id)),
   }));
@@ -956,7 +955,7 @@ async function getCatalogue(req, res) {
         // order, not insertion order — see models/deities' displayOrder.
         .populate({ path: "deityMapping", select: "name color", options: { sort: { displayOrder: 1, name: 1 } } })
               .select(
-                "name tamilName code salePrice categoryDetails isInventoryRequired currentStock thresholdCount isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers sessionRequired image color"
+                "name tamilName code salePrice categoryDetails isInventoryRequired currentStock thresholdCount isDeityMappingRequired deityMapping isFamilyMembersRequired maxFamilyMembers image color"
               )
           )
         : [],

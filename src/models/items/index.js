@@ -67,6 +67,8 @@ const itemSchema = new mongoose.Schema({
 itemSchema.plugin(auditablePlugin);
 
 itemSchema.index({ code: 1 }, activeUniqueIndexOptions({ collation: { locale: "en", strength: 2 } }));
+// No two live items share a name (any letter case); a deleted item frees its name. See also makeCrudController's uniqueNames check, which gives the friendly message.
+itemSchema.index({ name: 1 }, activeUniqueIndexOptions({ collation: { locale: "en", strength: 2 } }));
 itemSchema.index({ status: 1, createdAt: -1 });
 // Matches the POS catalogue's actual query shape exactly (controllers/pos
 // listPosItems/getCatalogue: filter on status + posAvailability, sort by

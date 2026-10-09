@@ -70,12 +70,12 @@ const createSchema = Joi.object({
   categoryDetails: Joi.array().items(categoryDetailEntry).default([]),
 
   generalLedger: objectId.required(),
-  salePrice: Joi.number().min(0).required(),
+  salePrice: Joi.number().min(0.01).required(), // must be greater than 0
 
   isFamilyMembersRequired: Joi.boolean().default(false),
   maxFamilyMembers: Joi.number().integer().min(1).default(2),
 
-  sessionRequired: Joi.boolean().default(false),
+  sessionRequired: Joi.any().strip(), // removed field - an older client may still send it
 
   isInventoryRequired: Joi.boolean().default(false),
   thresholdCount: Joi.number().integer().min(0).default(0),
@@ -104,12 +104,12 @@ const updateSchema = Joi.object({
   categoryDetails: Joi.array().items(categoryDetailEntry),
 
   generalLedger: objectId,
-  salePrice: Joi.number().min(0),
+  salePrice: Joi.number().min(0.01), // must be greater than 0
 
   isFamilyMembersRequired: Joi.boolean(),
   maxFamilyMembers: Joi.number().integer().min(1),
 
-  sessionRequired: Joi.boolean(),
+  sessionRequired: Joi.any().strip(), // removed field - an older client may still send it
 
   isInventoryRequired: Joi.boolean(),
   thresholdCount: Joi.number().integer().min(0),

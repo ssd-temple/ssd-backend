@@ -25,7 +25,23 @@ const { findBlockingReference } = require("../utils/reference-guard");
  * `{ displayOrder: 1, name: 1 }`, so admin-assigned ordering wins and
  * deities sharing the same value still land in a stable, alphabetical spot.
  */
-function makeCrudController(Model, { searchFields = [], populate = [], referencedBy = [], sort = { createdAt: -1 }, decorateItems } = {}) {
+function makeCrudController(Model, { searchFields = [], populate = [], referencedBy = [], sort = { createdAt: -1 }, decorateItems, uniqueNames } = {}) {
+  /**
+   * `uniqueNames` - e.g. "item": refuses a create/edit whose name is already used by
+   * another record of this master, whatever the letter case and whether that record is
+   * active or inactive. Only a DELETED record (isDeleted = true) frees its name for reuse.
+   * Returns the message to show, or null when the name is free.
+   */
+  async function findDuplicateName(name, excludeId) {
+    if (!uniqueNames || typeof name !== "string" || !name.trim()) return null;
+    const clash = await Model.findOne(
+      Model.notDeletedFilter({ name: name.trim(), ...(excludeId ? { _id: { $ne: excludeId } } : {}) })
+    )
+      .collation({ locale: "en", strength: 2 })
+      .select("_id");
+    return clash ? `A${/^[aeiou]/i.test(uniqueNames) ? "n" : ""} ${uniqueNames} named "${name.trim()}" already exists. Duplicate names are not allowed.` : null;
+  }
+
   async function list(req, res) {
     try {
       const page = Math.max(1, Number(req.query.page) || 1);
@@ -56,6 +72,8 @@ function makeCrudController(Model, { searchFields = [], populate = [], reference
 
   async function create(req, res) {
     try {
+      const duplicate = await findDuplicateName(req.body.name);
+      if (duplicate) return exceptionHandler({ res, error: duplicate, statusCode: 409 });
       const doc = await Model.create({ ...req.body, createdBy: req.auth?.userId || null });
       return responseHandler({ res, response: doc, successMessage: "Created successfully.", statusCode: 201 });
     } catch (error) {
@@ -68,6 +86,8 @@ function makeCrudController(Model, { searchFields = [], populate = [], reference
 
   async function update(req, res) {
     try {
+      const duplicate = await findDuplicateName(req.body.name, req.params.id);
+      if (duplicate) return exceptionHandler({ res, error: duplicate, statusCode: 409 });
       const doc = await Model.findOneAndUpdate(
         Model.notDeletedFilter({ _id: req.params.id }),
         { ...req.body, updatedBy: req.auth?.userId || null },

@@ -46,7 +46,6 @@ const serviceSchema = new mongoose.Schema({
   isFamilyMembersRequired: { type: Boolean, default: false },
   maxFamilyMembers: { type: Number, default: 2 },
 
-  sessionRequired: { type: Boolean, default: false },
 
   isInventoryRequired: { type: Boolean, default: false },
   thresholdCount: { type: Number, default: 0 },
@@ -70,6 +69,8 @@ const serviceSchema = new mongoose.Schema({
 serviceSchema.plugin(auditablePlugin);
 
 serviceSchema.index({ code: 1 }, activeUniqueIndexOptions({ collation: { locale: "en", strength: 2 } }));
+// No two live services share a name (any letter case); a deleted service frees its name. See also makeCrudController's uniqueNames check, which gives the friendly message.
+serviceSchema.index({ name: 1 }, activeUniqueIndexOptions({ collation: { locale: "en", strength: 2 } }));
 serviceSchema.index({ status: 1, createdAt: -1 });
 // Same reasoning as Item's matching index — covers listPosServices/
 // getCatalogue's actual filter (status + isPosAvailable) and sort (name) in

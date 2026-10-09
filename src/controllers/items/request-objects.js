@@ -69,7 +69,7 @@ const createSchema = Joi.object({
   name: Joi.string().trim().min(1).max(150).required(),
   tamilName: Joi.string().allow("").default(""),
   generalLedger: objectId.required(),
-  salePrice: Joi.number().min(0).required(),
+  salePrice: Joi.number().min(0.01).required(), // must be greater than 0
   description: Joi.string().allow("").default(""),
   image: Joi.string().allow("", null).default(null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow("").default(""),
@@ -103,7 +103,7 @@ const updateSchema = Joi.object({
   name: Joi.string().trim().min(1).max(150),
   tamilName: Joi.string().allow(""),
   generalLedger: objectId,
-  salePrice: Joi.number().min(0),
+  salePrice: Joi.number().min(0.01), // must be greater than 0
   description: Joi.string().allow(""),
   image: Joi.string().allow("", null),
   color: Joi.string().trim().pattern(HEX_COLOR).allow(""),
